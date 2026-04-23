@@ -2,11 +2,12 @@
 
 from mcp.server.fastmcp import FastMCP
 
-from router_mcp.client import gnmi_get, gnmi_set
-from router_mcp.utils.formatters import format_node_results, format_dry_run
+from netmcp.inventory import NodeInfo
+from netmcp.nos.sros.client import gnmi_get, gnmi_set
+from netmcp.utils.formatters import format_dry_run, format_node_results
 
 
-def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
+def register(mcp: FastMCP, nodes: dict[str, NodeInfo]) -> None:
 
     @mcp.tool()
     def sros_get_ports(node: str) -> str:
@@ -15,12 +16,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-state:state/port")
+        data = gnmi_get(node_info, "nokia-state:state/port")
         if data is None:
-            return f"Error: could not retrieve ports from {node} ({hostname})"
+            return f"Error: could not retrieve ports from {node} ({node_info.fqdn})"
         ports = data if isinstance(data, list) else [data]
         summary = [
             {
@@ -40,12 +41,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, 'nokia-state:state/router[router-name=Base]/interface')
+        data = gnmi_get(node_info, "nokia-state:state/router[router-name=Base]/interface")
         if data is None:
-            return f"Error: could not retrieve interfaces from {node} ({hostname})"
+            return f"Error: could not retrieve interfaces from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -56,13 +57,13 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             node: Node short name (e.g. "dcgw1").
             interface_name: Interface name (e.g. "to_spine1", "system").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
         path = f"nokia-state:state/router[router-name=Base]/interface[interface-name={interface_name}]"
-        data = gnmi_get(hostname, path)
+        data = gnmi_get(node_info, path)
         if data is None:
-            return f"Error: could not retrieve interface {interface_name!r} from {node} ({hostname})"
+            return f"Error: could not retrieve interface {interface_name!r} from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -80,14 +81,14 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             description: New description string.
             dry_run: If True, show what would be sent without making changes.
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
         path = f"nokia-conf:configure/router[router-name=Base]/interface[interface-name={interface_name}]"
         value = {"description": description}
         if dry_run:
             return format_dry_run(node, path, value)
-        result = gnmi_set(hostname, path, value, operation="update")
+        result = gnmi_set(node_info, path, value, operation="update")
         if result is None:
             return f"Error: failed to set description on {interface_name!r} of {node}"
         return f"OK: description on {interface_name!r} of {node} set to {description!r}"

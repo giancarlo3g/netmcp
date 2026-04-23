@@ -3,8 +3,9 @@
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ValidationError
 
-from router_mcp.client import gnmi_get, gnmi_set
-from router_mcp.utils.formatters import format_node_results, format_dry_run
+from netmcp.inventory import NodeInfo
+from netmcp.nos.sros.client import gnmi_get, gnmi_set
+from netmcp.utils.formatters import format_dry_run, format_node_results
 
 
 class _VplsIntent(BaseModel):
@@ -17,7 +18,7 @@ class _VplsIntent(BaseModel):
     import_rt: str
 
 
-def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
+def register(mcp: FastMCP, nodes: dict[str, NodeInfo]) -> None:
 
     @mcp.tool()
     def sros_evpn_list_services(node: str) -> str:
@@ -26,12 +27,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-conf:configure/service/vpls")
+        data = gnmi_get(node_info, "nokia-conf:configure/service/vpls")
         if data is None:
-            return f"No VPLS services found or error retrieving from {node} ({hostname})"
+            return f"No VPLS services found or error retrieving from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -42,13 +43,13 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             node: Node short name (e.g. "dcgw1").
             service_name: VPLS service name (e.g. "1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
         path = f"nokia-conf:configure/service/vpls[service-name={service_name}]"
-        data = gnmi_get(hostname, path)
+        data = gnmi_get(node_info, path)
         if data is None:
-            return f"Service {service_name!r} not found on {node} ({hostname})"
+            return f"Service {service_name!r} not found on {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -59,13 +60,13 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             node: Node short name (e.g. "dcgw1").
             service_name: VPLS service name (e.g. "1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
         path = f"nokia-state:state/service/vpls[service-name={service_name}]"
-        data = gnmi_get(hostname, path)
+        data = gnmi_get(node_info, path)
         if data is None:
-            return f"Service {service_name!r} state not found on {node} ({hostname})"
+            return f"Service {service_name!r} state not found on {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -101,8 +102,8 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             import_rt: BGP import route-target (e.g. "target:65011:1").
             dry_run: If True, show what would be sent without making changes.
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
 
         try:
@@ -153,9 +154,9 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         if dry_run:
             return format_dry_run(node, path, value)
 
-        result = gnmi_set(hostname, path, value, operation="update")
+        result = gnmi_set(node_info, path, value, operation="update")
         if result is None:
-            return f"Error: failed to provision VPLS {service_name!r} on {node} ({hostname})"
+            return f"Error: failed to provision VPLS {service_name!r} on {node} ({node_info.fqdn})"
         return (
             f"OK: VPLS {service_name!r} (service-id={service_id}, VNI={vni}, EVI={evi}, "
             f"RD={route_distinguisher}, export-RT={export_rt}, import-RT={import_rt}) "
@@ -178,8 +179,8 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             service_name: VPLS service name to delete (e.g. "1").
             dry_run: If True, show what would be deleted without making changes.
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
 
         path = f"nokia-conf:configure/service/vpls[service-name={service_name}]"
@@ -191,7 +192,7 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
                 f"  Path:      {path}"
             )
 
-        result = gnmi_set(hostname, path, None, operation="delete")
+        result = gnmi_set(node_info, path, None, operation="delete")
         if result is None:
-            return f"Error: failed to delete VPLS {service_name!r} on {node} ({hostname})"
+            return f"Error: failed to delete VPLS {service_name!r} on {node} ({node_info.fqdn})"
         return f"OK: VPLS {service_name!r} deleted from {node}."

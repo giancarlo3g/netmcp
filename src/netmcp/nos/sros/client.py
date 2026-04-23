@@ -11,11 +11,10 @@ List keys use unquoted values, e.g.:
 
 import contextlib
 import io
-import os
 
 from pygnmi.client import gNMIclient
 
-from router_mcp.config import GNMI_PORT, GNMI_USER, get_password
+from netmcp.inventory import NodeInfo, resolve_password
 
 
 @contextlib.contextmanager
@@ -25,17 +24,17 @@ def _suppress_output():
         yield
 
 
-def _make_gc(host: str) -> gNMIclient:
+def _make_gc(node: NodeInfo) -> gNMIclient:
     """
-    Create a fresh gNMIclient for the given host.
+    Create a fresh gNMIclient for the given node.
 
     A new client must be created before every call because pygnmi opens
     and closes the gRPC channel inside `with gc:`, consuming the client object.
     """
     return gNMIclient(
-        target=(host, GNMI_PORT),
-        username=GNMI_USER,
-        password=get_password(),
+        target=(node.fqdn, node.gnmi_port),
+        username=node.username,
+        password=resolve_password(node),
         insecure=True,
     )
 
@@ -89,13 +88,13 @@ def _set_path(gc: gNMIclient, path: str, value, operation: str = "update", encod
             return None
 
 
-def gnmi_get(hostname: str, path: str) -> dict | None:
-    """Perform a gNMI GET against hostname at the given YANG path."""
+def gnmi_get(node: NodeInfo, path: str) -> dict | None:
+    """Perform a gNMI GET against the node at the given YANG path."""
     with _suppress_output():
-        return _get_path(_make_gc(hostname), path)
+        return _get_path(_make_gc(node), path)
 
 
-def gnmi_set(hostname: str, path: str, value, operation: str = "update") -> dict | None:
-    """Perform a gNMI SET against hostname at the given YANG path."""
+def gnmi_set(node: NodeInfo, path: str, value, operation: str = "update") -> dict | None:
+    """Perform a gNMI SET against the node at the given YANG path."""
     with _suppress_output():
-        return _set_path(_make_gc(hostname), path, value, operation=operation)
+        return _set_path(_make_gc(node), path, value, operation=operation)

@@ -1,19 +1,21 @@
-# router-mcp
+# netmcp
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes Nokia SR OS routers to LLM agents via gNMI. It allows an AI assistant (such as Claude) to query and configure SR OS devices directly — reading BGP state, managing interfaces, and provisioning EVPN/VPLS services.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes network routers from multiple vendors to LLM agents. It allows an AI assistant (such as Claude) to query and configure routers directly — reading BGP state, managing interfaces, provisioning EVPN services, and more — without knowing vendor-specific CLI syntax.
+
+**Currently implemented:** Nokia SR OS (via gNMI)
+**Placeholder support:** Nokia SR Linux, Arista EOS, Juniper JunOS, Cisco IOS-XR
 
 ## Prerequisites
 
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/) package manager
-- A running containerlab topology using `nokia_srsim` nodes (see [Lab Environment](#lab-environment))
-- SR OS simulator license (required by `nokia_srsim`)
+- A running containerlab topology or a `netmcp.yml` inventory file pointing at reachable nodes
 
 ## Installation
 
 ```bash
 git clone <repo-url>
-cd router-mcp
+cd netmcp
 uv sync
 ```
 
@@ -23,15 +25,15 @@ uv sync
 
 The repository includes `.mcp.json`, which registers the server automatically when you open the project in Claude Code. No additional setup is needed — Claude will discover and connect to the server.
 
-To override the default gNMI password, edit `.claude/settings.json`:
+To override credentials, edit `.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
-    "router-mcp": {
+    "netmcp": {
       "command": "uv",
-      "args": ["run", "router-mcp"],
-      "env": { "SROS_PASSWORD": "your-password" }
+      "args": ["run", "netmcp"],
+      "env": { "NETMCP_DEFAULT_PASSWORD": "your-password" }
     }
   }
 }
@@ -40,35 +42,89 @@ To override the default gNMI password, edit `.claude/settings.json`:
 ### Standalone
 
 ```bash
-uv run router-mcp
+uv run netmcp
 ```
+
+## Node Inventory
+
+The server supports two discovery modes (in priority order):
+
+### 1. Static inventory file (`netmcp.yml`)
+
+Create a `netmcp.yml` in your project root (searched upward from cwd):
+
+```yaml
+inventory:
+  nodes:
+    - name: dcgw1
+      fqdn: clab-evpn-dcgw1
+      nos: sros
+      tags: [dcgw, dc1]
+
+    - name: spine1
+      fqdn: clab-evpn-spine1
+      nos: srl
+
+    - name: pe1
+      fqdn: pe1.prod.example.com
+      nos: iosxr
+      transport: netconf
+```
+
+### 2. Containerlab auto-discovery
+
+If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upward from cwd and auto-discovers nodes by their containerlab kind. Override the topology file path with `NETMCP_CLAB_TOPOLOGY=/path/to/topo.yml`.
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `SROS_PASSWORD` | `NokiaSros1!` | gNMI password for all SR OS nodes |
-
-The server auto-discovers SR OS nodes from `containerlab/nokia-evpn.clab.yml` (searched upward from the working directory). gNMI connects on port `57400` with username `admin`.
+| Variable | Description |
+|---|---|
+| `NETMCP_{NODE_UPPER}_PASSWORD` | Per-node password (e.g. `NETMCP_DCGW1_PASSWORD`) |
+| `NETMCP_DEFAULT_PASSWORD` | Global password for all nodes |
+| `SROS_PASSWORD` | Legacy alias for SR OS nodes |
+| `NETMCP_CLAB_TOPOLOGY` | Explicit path to a containerlab topology file |
+| `NETMCP_NO_INVENTORY` | Set to `1` to start without any inventory (CI/testing) |
 
 ## Available Tools
 
-### System
+Tools come in two categories:
+
+- **Unified tools** — vendor-agnostic, work across all supported NOS (e.g. `get_interfaces`). Implemented in Phase 3.
+- **Vendor tools** — NOS-specific, prefixed with the vendor name (e.g. `sros_evpn_provision_vpls`). Available now.
+
+### Unified tools *(Phase 3 — coming soon)*
+
+| Tool | Description |
+|---|---|
+| `list_nodes` | List all nodes in the inventory with their NOS type and hostname |
+| `get_system_info` | Get system information from any node |
+| `get_system_alarms` | Get active alarms from any node |
+| `get_interfaces` | Get all interfaces from any node |
+| `get_interface_state` | Get detailed state for a specific interface |
+| `set_interface_description` | Set an interface description (supports `dry_run`) |
+| `get_bgp_summary` | BGP summary statistics |
+| `get_bgp_neighbors` | All BGP neighbor states |
+| `get_bgp_neighbor` | Detailed state for a specific BGP neighbor |
+| `get_bgp_config` | BGP configuration |
+
+### SR OS vendor tools *(available now)*
+
+#### System
 | Tool | Description |
 |---|---|
 | `sros_list_nodes` | List all discovered SR OS nodes and their hostnames |
 | `sros_system_info` | Get system information (version, uptime, etc.) |
 | `sros_system_alarms` | Get active system alarms |
 
-### Interfaces
+#### Interfaces
 | Tool | Description |
 |---|---|
 | `sros_get_ports` | List physical ports and their operational state |
-| `sros_get_interfaces` | List router interfaces |
+| `sros_get_interfaces` | List router interfaces in the Base routing instance |
 | `sros_get_interface_state` | Get detailed state for a specific interface |
 | `sros_set_interface_description` | Set an interface description (supports `dry_run`) |
 
-### BGP
+#### BGP
 | Tool | Description |
 |---|---|
 | `sros_bgp_summary` | BGP summary statistics from the Base routing instance |
@@ -76,7 +132,7 @@ The server auto-discovers SR OS nodes from `containerlab/nokia-evpn.clab.yml` (s
 | `sros_bgp_neighbor` | Detailed state for a specific BGP neighbor |
 | `sros_bgp_config` | BGP configuration from the Base routing instance |
 
-### EVPN / VPLS
+#### EVPN / VPLS
 | Tool | Description |
 |---|---|
 | `sros_evpn_list_services` | List all VPLS services on a node |
@@ -111,22 +167,31 @@ cd containerlab
 sudo containerlab deploy -t nokia-evpn.clab.yml
 ```
 
-> **Note:** `nokia_srsim` requires a local Docker image (`nokia_srsim:25.10.R2`) and a valid license file. See the [containerlab documentation](https://containerlab.dev) and contact Nokia for the simulator image and license.
+> **Note:** `nokia_srsim` requires a local Docker image and a valid license file. See the [containerlab documentation](https://containerlab.dev) and contact Nokia for the simulator image and license.
 
-Once the lab is running, the MCP server can be started from the repository root and will automatically resolve node hostnames (e.g., `clab-evpn-dcgw1`).
+Once the lab is running, start the MCP server from the repository root — it will auto-discover nodes and resolve hostnames (e.g., `clab-evpn-dcgw1`).
 
 ## Project Structure
 
 ```
-src/sros_mcp/
-├── server.py          # FastMCP entrypoint — registers all context modules
-├── client.py          # gNMI transport (gnmi_get / gnmi_set)
-├── config.py          # Node discovery from containerlab topology YAML
-├── contexts/
-│   ├── system.py      # System tools
-│   ├── interfaces.py  # Interface tools
-│   ├── bgp.py         # BGP tools
-│   └── evpn.py        # EVPN/VPLS tools
+src/netmcp/
+├── server.py          # FastMCP entrypoint — loads inventory, registers NOS tools
+├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery
+├── registry.py        # NOSBackend Protocol and NotImplementedBackend
+├── dispatch.py        # Unified cross-vendor tools (Phase 3)
+├── nos/
+│   ├── sros/          # Nokia SR OS — fully implemented
+│   │   ├── client.py  # gNMI transport (gnmi_get / gnmi_set)
+│   │   └── contexts/
+│   │       ├── system.py, interfaces.py, bgp.py, evpn.py
+│   ├── srl/           # Nokia SR Linux — placeholder (Phase 2)
+│   ├── eos/           # Arista EOS — placeholder
+│   ├── junos/         # Juniper JunOS — placeholder
+│   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     └── formatters.py  # Output formatting helpers
 ```
+
+## Adding a New NOS
+
+Each `nos/{vendor}/` directory is self-contained. See the `README.md` inside any placeholder directory (e.g. `nos/eos/README.md`) for step-by-step instructions.

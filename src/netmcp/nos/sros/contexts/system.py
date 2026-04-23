@@ -2,19 +2,20 @@
 
 from mcp.server.fastmcp import FastMCP
 
-from router_mcp.client import gnmi_get
-from router_mcp.utils.formatters import format_node_results
+from netmcp.inventory import NodeInfo
+from netmcp.nos.sros.client import gnmi_get
+from netmcp.utils.formatters import format_node_results
 
 
-def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
+def register(mcp: FastMCP, nodes: dict[str, NodeInfo]) -> None:
 
     @mcp.tool()
     def sros_list_nodes() -> str:
-        """List all SR OS nodes discovered from the topology YAML.
+        """List all SR OS nodes discovered from the inventory.
 
-        Returns node short names and their containerlab FQDNs.
+        Returns node short names and their FQDNs.
         """
-        lines = [f"  * {name} ({fqdn})" for name, fqdn in nodes.items()]
+        lines = [f"  * {name} ({info.fqdn})" for name, info in nodes.items()]
         return "Available SR OS nodes:\n" + "\n".join(lines)
 
     @mcp.tool()
@@ -24,12 +25,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-state:state/system")
+        data = gnmi_get(node_info, "nokia-state:state/system")
         if data is None:
-            return f"Error: could not retrieve system info from {node} ({hostname})"
+            return f"Error: could not retrieve system info from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -39,10 +40,10 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-state:state/system/alarm")
+        data = gnmi_get(node_info, "nokia-state:state/system/alarm")
         if data is None:
-            return f"No alarms found or could not retrieve alarms from {node} ({hostname})"
+            return f"No alarms found or could not retrieve alarms from {node} ({node_info.fqdn})"
         return format_node_results({node: data})

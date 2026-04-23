@@ -2,11 +2,12 @@
 
 from mcp.server.fastmcp import FastMCP
 
-from router_mcp.client import gnmi_get
-from router_mcp.utils.formatters import format_node_results
+from netmcp.inventory import NodeInfo
+from netmcp.nos.sros.client import gnmi_get
+from netmcp.utils.formatters import format_node_results
 
 
-def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
+def register(mcp: FastMCP, nodes: dict[str, NodeInfo]) -> None:
 
     @mcp.tool()
     def sros_bgp_summary(node: str) -> str:
@@ -15,12 +16,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-state:state/router[router-name=Base]/bgp/statistics")
+        data = gnmi_get(node_info, "nokia-state:state/router[router-name=Base]/bgp/statistics")
         if data is None:
-            return f"Error: could not retrieve BGP summary from {node} ({hostname})"
+            return f"Error: could not retrieve BGP summary from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -30,12 +31,12 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-state:state/router[router-name=Base]/bgp/neighbor")
+        data = gnmi_get(node_info, "nokia-state:state/router[router-name=Base]/bgp/neighbor")
         if data is None:
-            return f"Error: could not retrieve BGP neighbors from {node} ({hostname})"
+            return f"Error: could not retrieve BGP neighbors from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -46,13 +47,13 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
             node: Node short name (e.g. "dcgw1").
             peer_ip: Neighbor IP address (e.g. "10.0.0.21").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
         path = f"nokia-state:state/router[router-name=Base]/bgp/neighbor[ip-address={peer_ip}]"
-        data = gnmi_get(hostname, path)
+        data = gnmi_get(node_info, path)
         if data is None:
-            return f"Error: could not retrieve BGP neighbor {peer_ip!r} from {node} ({hostname})"
+            return f"Error: could not retrieve BGP neighbor {peer_ip!r} from {node} ({node_info.fqdn})"
         return format_node_results({node: data})
 
     @mcp.tool()
@@ -62,10 +63,10 @@ def register(mcp: FastMCP, nodes: dict[str, str]) -> None:
         Args:
             node: Node short name (e.g. "dcgw1").
         """
-        hostname = nodes.get(node)
-        if not hostname:
+        node_info = nodes.get(node)
+        if not node_info:
             return f"Error: unknown node {node!r}. Available: {list(nodes)}"
-        data = gnmi_get(hostname, "nokia-conf:configure/router[router-name=Base]/bgp")
+        data = gnmi_get(node_info, "nokia-conf:configure/router[router-name=Base]/bgp")
         if data is None:
-            return f"Error: could not retrieve BGP config from {node} ({hostname})"
+            return f"Error: could not retrieve BGP config from {node} ({node_info.fqdn})"
         return format_node_results({node: data})

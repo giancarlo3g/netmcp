@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "router-mcp"
+name = "netmcp"
 version = "0.1.0"
-description = "MCP server for networking routers via gNMI"
+description = "Multi-vendor MCP server for network routers"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.0.0",
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-router-mcp = "router_mcp.server:run"
+netmcp = "netmcp.server:run"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/router_mcp"]
+packages = ["src/netmcp"]
