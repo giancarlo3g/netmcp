@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "router-mcp": {
+      "command": "uv",
+      "args": ["run", "router-mcp"]
+    }
+  }
+}

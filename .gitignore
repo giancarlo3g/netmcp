@@ -1,0 +1,8 @@
+containerlab/clab-evpn/*
+**/.venv/
+**/__pycache__/
+**/.adk/
+**/.env
+CLAUDE.md
+.claude/*
+IDEA.md

@@ -1,0 +1,89 @@
+{
+  "freeTextAnnotations": [],
+  "freeShapeAnnotations": [],
+  "groupStyleAnnotations": [],
+  "networkNodeAnnotations": [],
+  "nodeAnnotations": [
+    {
+      "id": "dcgw1",
+      "interfacePattern": "1/1/c{n}/1",
+      "position": {
+        "x": 220,
+        "y": 400
+      }
+    },
+    {
+      "id": "dcgw2",
+      "interfacePattern": "1/1/c{n}/1",
+      "position": {
+        "x": 220,
+        "y": 300
+      }
+    },
+    {
+      "id": "spine1",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 380,
+        "y": 400
+      }
+    },
+    {
+      "id": "spine2",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 380,
+        "y": 300
+      }
+    },
+    {
+      "id": "leaf1",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 460,
+        "y": 480
+      }
+    },
+    {
+      "id": "leaf2",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 480,
+        "y": 220
+      }
+    },
+    {
+      "id": "leaf3",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 520,
+        "y": 400
+      }
+    },
+    {
+      "id": "leaf4",
+      "interfacePattern": "e1-{n}",
+      "position": {
+        "x": 520,
+        "y": 300
+      }
+    },
+    {
+      "id": "client1",
+      "position": {
+        "x": 600,
+        "y": 340
+      }
+    },
+    {
+      "id": "client2",
+      "position": {
+        "x": 700,
+        "y": 380
+      }
+    }
+  ],
+  "edgeAnnotations": [],
+  "aliasEndpointAnnotations": [],
+  "viewerSettings": {}
+}
