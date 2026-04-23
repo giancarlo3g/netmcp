@@ -403,24 +403,41 @@ Steps to add a new NOS backend (also goes in `CONTRIBUTING.md` and each placehol
 - Update `.mcp.json`: `"sros-mcp"` → `"netmcp"`
 - Legacy `SROS_PASSWORD` env var aliased in `resolve_password()` for backward compat
 
-### Phase 2 — SR Linux implementation
+### Phase 2 — Unified dispatch
+
+- Implement `dispatch.py` with all unified tools from the tool catalog (system, interfaces, BGP, EVPN read, IGP, MPLS/SR, VRF, logging)
+- Each unified tool resolves `NodeInfo`, looks up backend from `REGISTRY`, calls the corresponding method
+- SR OS backend satisfies the full `NOSBackend` Protocol; all other NOS return `NotImplementedBackend` error strings
+- Verify: `get_interfaces("dcgw1")` → SROS, `get_interfaces("spine1")` → `"Error: get_interfaces is not implemented for NOS 'srl'."`
+- Add `test_dispatch.py` unit tests with a mock backend
+
+### Phase 3 — SR Linux implementation
 
 - `nos/srl/client.py`: gNMI with SRL YANG paths (`srl_nokia-*` namespaces)
 - `nos/srl/contexts/`: system, interfaces, bgp, evpn
-- `nos/srl/backend.py`
+- `nos/srl/backend.py`: implements `NOSBackend` Protocol for all supported methods
 - Update `CLAB_KIND_TO_NOS`: `nokia_srlinux → srl`
 - Register SRL in `registry.py` and `server.py`
 - Existing `nokia-evpn.clab.yml` spine/leaf nodes now managed
-
-### Phase 3 — Unified dispatch
-
-- Implement `dispatch.py` with all unified tools
-- Verify `get_interfaces("spine1")` → SRL, `get_interfaces("dcgw1")` → SROS
+- Verify: `get_interfaces("spine1")` → SRL JSON
 
 ### Phase 4 — New domains
 
-- Implement IGP, MPLS/SR, VRF, Logging for SR OS
+- Implement IGP, MPLS/SR, VRF, Logging contexts for SR OS
 - Implement same domains for SR Linux where gNMI paths exist
+- Register new domain methods in both `SROSBackend` and `SRLBackend`
+
+### Phase 5 — Dynamic YANG-driven tool execution
+
+For tool domains not yet implemented in a NOS backend, provide a fallback mechanism that:
+
+1. **Schema discovery** — retrieves YANG models from the node via NETCONF `<get-schema>` (RFC 6022). Models are cached on disk keyed by `(vendor, model_name, revision)` to avoid redundant fetches.
+2. **Subtree slicing** — given a high-level intent (e.g. "get MPLS LSPs"), slices the relevant YANG subtree from the cached schema using the path or module name provided by the caller or inferred by the LLM.
+3. **Action execution** — constructs and sends the appropriate gNMI GET or NETCONF `<get>`/`<edit-config>` request using the sliced schema as a guide, without requiring a hand-written context module.
+
+This allows an agent to operate on any YANG-modeled data path on any node, even for NOS/domain combinations that have no backend implementation yet. The mechanism is a fallback only — hand-written context modules take precedence when available.
+
+Full design details (cache format, slicing algorithm, safety guardrails for write operations) to be defined in a future addendum.
 
 ### Breaking change
 
@@ -451,7 +468,7 @@ sros_evpn_provision_vpls(node="dcgw1", ..., dry_run=True)   # dry run output
 sros_evpn_provision_vpls(node="dcgw1", ..., dry_run=False)  # live provision
 sros_evpn_get_service(node="dcgw1", service_name="2")       # confirm exists
 sros_evpn_delete_vpls(node="dcgw1", service_name="2")       # delete
-get_system_info(node="spine1")                      # SR Linux version JSON (Phase 2+)
+get_system_info(node="spine1")                      # SR Linux version JSON (Phase 3+)
 ```
 
 ### CI (no lab)
