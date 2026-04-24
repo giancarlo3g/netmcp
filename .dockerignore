@@ -1,0 +1,17 @@
+.venv
+__pycache__
+*.pyc
+.git
+.gitignore
+.pytest_cache
+*.md
+*.back
+*.bak
+.vscode
+.env
+.envrc
+.flake8
+.cache
+.claude/
+CLAUDE.md
+containerlab/

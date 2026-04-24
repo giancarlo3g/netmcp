@@ -19,3 +19,11 @@ netmcp = "netmcp.server:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/netmcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

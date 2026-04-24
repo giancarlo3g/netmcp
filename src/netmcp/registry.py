@@ -23,6 +23,7 @@ class NOSBackend(Protocol):
     # interfaces
     def get_interfaces(self, node: NodeInfo) -> str: ...
     def get_interface_state(self, node: NodeInfo, interface_name: str) -> str: ...
+    def set_interface_description(self, node: NodeInfo, interface_name: str, description: str, dry_run: bool) -> str: ...
 
     # bgp
     def get_bgp_summary(self, node: NodeInfo) -> str: ...
@@ -32,21 +33,27 @@ class NOSBackend(Protocol):
 
     # igp
     def get_isis_adjacencies(self, node: NodeInfo) -> str: ...
+    def get_isis_database(self, node: NodeInfo) -> str: ...
+    def get_isis_config(self, node: NodeInfo) -> str: ...
     def get_ospf_neighbors(self, node: NodeInfo) -> str: ...
+    def get_ospf_config(self, node: NodeInfo) -> str: ...
 
     # mpls / segment routing
     def get_mpls_lsps(self, node: NodeInfo) -> str: ...
     def get_sr_sid_table(self, node: NodeInfo) -> str: ...
+    def get_sr_config(self, node: NodeInfo) -> str: ...
 
     # vrf / l3vpn
     def get_vrfs(self, node: NodeInfo) -> str: ...
     def get_vrf_routes(self, node: NodeInfo, vrf_name: str) -> str: ...
+    def get_vrf_interfaces(self, node: NodeInfo, vrf_name: str) -> str: ...
 
     # evpn (unified read)
     def get_evpn_instances(self, node: NodeInfo) -> str: ...
 
     # logging
     def get_log_events(self, node: NodeInfo, count: int, severity: str) -> str: ...
+    def get_log_config(self, node: NodeInfo) -> str: ...
 
 
 class NotImplementedBackend:
@@ -75,6 +82,9 @@ class NotImplementedBackend:
     def get_interface_state(self, node: NodeInfo, interface_name: str) -> str:
         return self._not_impl("get_interface_state")
 
+    def set_interface_description(self, node: NodeInfo, interface_name: str, description: str, dry_run: bool) -> str:
+        return self._not_impl("set_interface_description")
+
     def get_bgp_summary(self, node: NodeInfo) -> str:
         return self._not_impl("get_bgp_summary")
 
@@ -90,8 +100,17 @@ class NotImplementedBackend:
     def get_isis_adjacencies(self, node: NodeInfo) -> str:
         return self._not_impl("get_isis_adjacencies")
 
+    def get_isis_database(self, node: NodeInfo) -> str:
+        return self._not_impl("get_isis_database")
+
+    def get_isis_config(self, node: NodeInfo) -> str:
+        return self._not_impl("get_isis_config")
+
     def get_ospf_neighbors(self, node: NodeInfo) -> str:
         return self._not_impl("get_ospf_neighbors")
+
+    def get_ospf_config(self, node: NodeInfo) -> str:
+        return self._not_impl("get_ospf_config")
 
     def get_mpls_lsps(self, node: NodeInfo) -> str:
         return self._not_impl("get_mpls_lsps")
@@ -99,14 +118,23 @@ class NotImplementedBackend:
     def get_sr_sid_table(self, node: NodeInfo) -> str:
         return self._not_impl("get_sr_sid_table")
 
+    def get_sr_config(self, node: NodeInfo) -> str:
+        return self._not_impl("get_sr_config")
+
     def get_vrfs(self, node: NodeInfo) -> str:
         return self._not_impl("get_vrfs")
 
     def get_vrf_routes(self, node: NodeInfo, vrf_name: str) -> str:
         return self._not_impl("get_vrf_routes")
 
+    def get_vrf_interfaces(self, node: NodeInfo, vrf_name: str) -> str:
+        return self._not_impl("get_vrf_interfaces")
+
     def get_evpn_instances(self, node: NodeInfo) -> str:
         return self._not_impl("get_evpn_instances")
 
     def get_log_events(self, node: NodeInfo, count: int, severity: str) -> str:
         return self._not_impl("get_log_events")
+
+    def get_log_config(self, node: NodeInfo) -> str:
+        return self._not_impl("get_log_config")

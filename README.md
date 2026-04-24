@@ -89,25 +89,70 @@ If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upwa
 
 Tools come in two categories:
 
-- **Unified tools** — vendor-agnostic, work across all supported NOS (e.g. `get_interfaces`). Implemented in Phase 3.
-- **Vendor tools** — NOS-specific, prefixed with the vendor name (e.g. `sros_evpn_provision_vpls`). Available now.
+- **Unified tools** — vendor-agnostic, dispatch to the correct NOS backend automatically. Work on any node regardless of vendor.
+- **Vendor tools** — NOS-specific, prefixed with the vendor name (e.g. `sros_evpn_provision_vpls`). Used for operations with no cross-vendor equivalent.
 
-### Unified tools *(Phase 3 — coming soon)*
+### Unified tools
 
+#### System
 | Tool | Description |
 |---|---|
 | `list_nodes` | List all nodes in the inventory with their NOS type and hostname |
-| `get_system_info` | Get system information from any node |
+| `get_system_info` | Get system information (platform, version, uptime) from any node |
 | `get_system_alarms` | Get active alarms from any node |
-| `get_interfaces` | Get all interfaces from any node |
-| `get_interface_state` | Get detailed state for a specific interface |
+
+#### Interfaces
+| Tool | Description |
+|---|---|
+| `get_interfaces` | Get all logical interfaces from any node |
+| `get_interface_state` | Get detailed operational state for a specific interface |
 | `set_interface_description` | Set an interface description (supports `dry_run`) |
+
+#### BGP
+| Tool | Description |
+|---|---|
 | `get_bgp_summary` | BGP summary statistics |
 | `get_bgp_neighbors` | All BGP neighbor states |
 | `get_bgp_neighbor` | Detailed state for a specific BGP neighbor |
 | `get_bgp_config` | BGP configuration |
 
-### SR OS vendor tools *(available now)*
+#### EVPN
+| Tool | Description |
+|---|---|
+| `get_evpn_instances` | List EVPN instances normalised to `{name, type, vni, evi}` |
+
+#### IGP *(SR OS only for now)*
+| Tool | Description |
+|---|---|
+| `get_isis_adjacencies` | All IS-IS adjacencies and their state |
+| `get_isis_database` | IS-IS link-state database (LSDB) summary |
+| `get_isis_config` | IS-IS instance configuration |
+| `get_ospf_neighbors` | OSPF neighbor states |
+| `get_ospf_config` | OSPF instance configuration |
+
+#### MPLS / Segment Routing *(SR OS only for now)*
+| Tool | Description |
+|---|---|
+| `get_mpls_lsps` | Active MPLS LSPs |
+| `get_sr_sid_table` | Segment Routing SID binding table |
+| `get_sr_config` | Segment Routing configuration |
+
+#### VRF / L3VPN *(SR OS only for now)*
+| Tool | Description |
+|---|---|
+| `get_vrfs` | All VRFs / network-instances |
+| `get_vrf_routes` | Route table for a specific VRF |
+| `get_vrf_interfaces` | Interfaces bound to a specific VRF |
+
+#### Logging *(SR OS only for now)*
+| Tool | Description |
+|---|---|
+| `get_log_events` | Recent log events — `count` (default 50) and `severity` filter params |
+| `get_log_config` | Logging destinations configuration |
+
+> **Note:** IGP, MPLS/SR, VRF, and Logging unified tools are wired up but the SR OS backend implementations are Phase 4 work. Calling them today returns `"Error: <method> is not implemented for NOS 'sros'."` until Phase 4 lands.
+
+### SR OS vendor tools
 
 #### System
 | Tool | Description |
@@ -175,21 +220,26 @@ Once the lab is running, start the MCP server from the repository root — it wi
 
 ```
 src/netmcp/
-├── server.py          # FastMCP entrypoint — loads inventory, registers NOS tools
+├── server.py          # FastMCP entrypoint — builds REGISTRY, registers unified + vendor tools
 ├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery
 ├── registry.py        # NOSBackend Protocol and NotImplementedBackend
-├── dispatch.py        # Unified cross-vendor tools (Phase 3)
+├── dispatch.py        # Unified cross-vendor tools (24 tools)
 ├── nos/
 │   ├── sros/          # Nokia SR OS — fully implemented
+│   │   ├── backend.py # SROSBackend — implements NOSBackend Protocol
 │   │   ├── client.py  # gNMI transport (gnmi_get / gnmi_set)
-│   │   └── contexts/
+│   │   └── contexts/  # sros_* vendor tools
 │   │       ├── system.py, interfaces.py, bgp.py, evpn.py
-│   ├── srl/           # Nokia SR Linux — placeholder (Phase 2)
+│   ├── srl/           # Nokia SR Linux — placeholder (Phase 3)
 │   ├── eos/           # Arista EOS — placeholder
 │   ├── junos/         # Juniper JunOS — placeholder
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     └── formatters.py  # Output formatting helpers
+
+tests/
+└── unit/
+    └── test_dispatch.py  # 30 tests — dispatch routing, error handling, NotImplementedBackend
 ```
 
 ## Adding a New NOS

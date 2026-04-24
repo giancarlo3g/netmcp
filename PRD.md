@@ -431,7 +431,7 @@ Steps to add a new NOS backend (also goes in `CONTRIBUTING.md` and each placehol
 
 For tool domains not yet implemented in a NOS backend, provide a fallback mechanism that:
 
-1. **Schema discovery** — retrieves YANG models from the node via NETCONF `<get-schema>` (RFC 6022). Models are cached on disk keyed by `(vendor, model_name, revision)` to avoid redundant fetches.
+1. **Schema discovery** — retrieves YANG models from the node via NETCONF `<get-schema>` (RFC 6022). Models are cached on by vendor, model_name, and revision to avoid redundant fetches.
 2. **Subtree slicing** — given a high-level intent (e.g. "get MPLS LSPs"), slices the relevant YANG subtree from the cached schema using the path or module name provided by the caller or inferred by the LLM.
 3. **Action execution** — constructs and sends the appropriate gNMI GET or NETCONF `<get>`/`<edit-config>` request using the sliced schema as a guide, without requiring a hand-written context module.
 
