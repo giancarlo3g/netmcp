@@ -39,6 +39,17 @@ To override credentials, edit `.claude/settings.json`:
 }
 ```
 
+Run the lab and start Claude
+```bash
+cd containerlab
+containerlab deploy
+claude
+```
+
+Prompt Examples
+- Check interfaces in all SROS routers
+- Provide BGP status of all neighbors by router
+
 ### Standalone
 
 ```bash
@@ -209,7 +220,7 @@ The lab runs eBGP as the underlay and MP-BGP EVPN over VXLAN as the overlay, wit
 
 ```bash
 cd containerlab
-sudo containerlab deploy -t nokia-evpn.clab.yml
+containerlab deploy
 ```
 
 > **Note:** `nokia_srsim` requires a local Docker image and a valid license file. See the [containerlab documentation](https://containerlab.dev) and contact Nokia for the simulator image and license.
