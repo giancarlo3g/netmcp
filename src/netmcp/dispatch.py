@@ -77,6 +77,18 @@ def register_unified_tools(
     # ------------------------------------------------------------------
 
     @mcp.tool()
+    def get_ports(node: str) -> str:
+        """Get all physical ports on any node.
+
+        Args:
+            node: Node short name (e.g. "dcgw1").
+        """
+        info, backend = _resolve(nodes, registry, node)
+        if info is None:
+            return backend
+        return backend.get_ports(info)
+
+    @mcp.tool()
     def get_interfaces(node: str) -> str:
         """Get all logical interfaces from any node.
 
@@ -192,6 +204,85 @@ def register_unified_tools(
         if info is None:
             return backend
         return backend.get_evpn_instances(info)
+
+    @mcp.tool()
+    def get_evpn_instance(node: str, instance_name: str) -> str:
+        """Get the configuration for a specific EVPN instance on any node.
+
+        Args:
+            node: Node short name (e.g. "dcgw1").
+            instance_name: EVPN instance name (e.g. "1").
+        """
+        info, backend = _resolve(nodes, registry, node)
+        if info is None:
+            return backend
+        return backend.get_evpn_instance(info, instance_name)
+
+    @mcp.tool()
+    def get_evpn_instance_state(node: str, instance_name: str) -> str:
+        """Get the operational state for a specific EVPN instance on any node.
+
+        Args:
+            node: Node short name (e.g. "dcgw1").
+            instance_name: EVPN instance name (e.g. "1").
+        """
+        info, backend = _resolve(nodes, registry, node)
+        if info is None:
+            return backend
+        return backend.get_evpn_instance_state(info, instance_name)
+
+    @mcp.tool()
+    def provision_evpn_instance(
+        node: str,
+        service_name: str,
+        service_id: int,
+        vni: int,
+        evi: int,
+        route_distinguisher: str,
+        export_rt: str,
+        import_rt: str,
+        dry_run: bool = False,
+    ) -> str:
+        """Provision an EVPN instance (VPLS + BGP-EVPN + VXLAN) on any node.
+
+        Always call get_evpn_instance first to confirm the instance does not
+        already exist before provisioning.
+
+        Args:
+            node: Node short name (e.g. "dcgw1").
+            service_name: Name for the EVPN instance (e.g. "2").
+            service_id: Numeric service ID (1-2147483647).
+            vni: VXLAN Network Identifier (1-16777215).
+            evi: EVPN Instance number (1-65535).
+            route_distinguisher: BGP route-distinguisher (e.g. "1:31").
+            export_rt: BGP export route-target (e.g. "target:65011:1").
+            import_rt: BGP import route-target (e.g. "target:65011:1").
+            dry_run: If True, show what would be sent without making changes.
+        """
+        info, backend = _resolve(nodes, registry, node)
+        if info is None:
+            return backend
+        return backend.provision_evpn_instance(
+            info, service_name, service_id, vni, evi,
+            route_distinguisher, export_rt, import_rt, dry_run,
+        )
+
+    @mcp.tool()
+    def delete_evpn_instance(node: str, instance_name: str, dry_run: bool = False) -> str:
+        """Delete an EVPN instance from any node.
+
+        Always call get_evpn_instance first to confirm the instance exists
+        before deleting.
+
+        Args:
+            node: Node short name (e.g. "dcgw1").
+            instance_name: EVPN instance name to delete (e.g. "1").
+            dry_run: If True, show what would be deleted without making changes.
+        """
+        info, backend = _resolve(nodes, registry, node)
+        if info is None:
+            return backend
+        return backend.delete_evpn_instance(info, instance_name, dry_run)
 
     # ------------------------------------------------------------------
     # IGP

@@ -21,12 +21,25 @@ uv sync
 
 ## Usage
 
-### With Claude Code (recommended)
+Two options are available depending on whether you want to run the server as a local process or a container.
 
-The repository includes `.mcp.json`, which registers the server automatically when you open the project in Claude Code. No additional setup is needed — Claude will discover and connect to the server.
+### Option 1 — Local process (stdio)
 
-To override credentials, edit `.claude/settings.json`:
+The server runs as a child process of the MCP client using stdio transport. This is the simplest setup and requires no extra infrastructure.
 
+`.mcp.json` (already included in the repo):
+```json
+{
+  "mcpServers": {
+    "netmcp": {
+      "command": "uv",
+      "args": ["run", "netmcp"]
+    }
+  }
+}
+```
+
+To pass credentials, add them under `env` in `.claude/settings.json`:
 ```json
 {
   "mcpServers": {
@@ -39,22 +52,39 @@ To override credentials, edit `.claude/settings.json`:
 }
 ```
 
-Run the lab and start Claude
+Start the lab and open Claude:
 ```bash
-cd containerlab
-containerlab deploy
+cd containerlab && containerlab deploy
 claude
 ```
 
-Prompt Examples
+### Option 2 — Docker container (HTTP/SSE)
+
+The server runs as a long-lived container and exposes an HTTP endpoint. This is useful when you want a shared server, run multiple clients, or prefer not to install Python locally.
+
+Build and start the container:
+```bash
+docker compose up -d --build
+```
+
+Point `.mcp.json` at the HTTP endpoint:
+```json
+{
+  "mcpServers": {
+    "netmcp": {
+      "url": "http://localhost:8088/mcp"
+    }
+  }
+}
+```
+
+Credentials and inventory overrides are set in `compose.yaml` (or a `.env` file) as environment variables — see [Environment Variables](#environment-variables) below.
+
+---
+
+Prompt examples (either option):
 - Check interfaces in all SROS routers
 - Provide BGP status of all neighbors by router
-
-### Standalone
-
-```bash
-uv run netmcp
-```
 
 ## Node Inventory
 
@@ -98,28 +128,24 @@ If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upwa
 
 ## Available Tools
 
-Tools come in two categories:
+All tools are vendor-agnostic and dispatch automatically to the correct NOS backend based on the node's type. No vendor-specific knowledge is required from the caller.
 
-- **Unified tools** — vendor-agnostic, dispatch to the correct NOS backend automatically. Work on any node regardless of vendor.
-- **Vendor tools** — NOS-specific, prefixed with the vendor name (e.g. `sros_evpn_provision_vpls`). Used for operations with no cross-vendor equivalent.
-
-### Unified tools
-
-#### System
+### System
 | Tool | Description |
 |---|---|
 | `list_nodes` | List all nodes in the inventory with their NOS type and hostname |
-| `get_system_info` | Get system information (platform, version, uptime) from any node |
-| `get_system_alarms` | Get active alarms from any node |
+| `get_system_info` | System information (platform, version, uptime) from any node |
+| `get_system_alarms` | Active alarms from any node |
 
-#### Interfaces
+### Interfaces
 | Tool | Description |
 |---|---|
+| `get_ports` | Get all physical ports and their operational state |
 | `get_interfaces` | Get all logical interfaces from any node |
 | `get_interface_state` | Get detailed operational state for a specific interface |
 | `set_interface_description` | Set an interface description (supports `dry_run`) |
 
-#### BGP
+### BGP
 | Tool | Description |
 |---|---|
 | `get_bgp_summary` | BGP summary statistics |
@@ -127,12 +153,16 @@ Tools come in two categories:
 | `get_bgp_neighbor` | Detailed state for a specific BGP neighbor |
 | `get_bgp_config` | BGP configuration |
 
-#### EVPN
+### EVPN
 | Tool | Description |
 |---|---|
-| `get_evpn_instances` | List EVPN instances normalised to `{name, type, vni, evi}` |
+| `get_evpn_instances` | List all EVPN instances normalised to `{name, type, vni, evi}` |
+| `get_evpn_instance` | Full configuration for a specific EVPN instance by name |
+| `get_evpn_instance_state` | Operational state for a specific EVPN instance by name |
+| `provision_evpn_instance` | Create an EVPN instance (VPLS + BGP-EVPN + VXLAN) — supports `dry_run` |
+| `delete_evpn_instance` | Delete an EVPN instance — supports `dry_run` |
 
-#### IGP *(SR OS only for now)*
+### IGP *(SR OS only for now)*
 | Tool | Description |
 |---|---|
 | `get_isis_adjacencies` | All IS-IS adjacencies and their state |
@@ -141,61 +171,27 @@ Tools come in two categories:
 | `get_ospf_neighbors` | OSPF neighbor states |
 | `get_ospf_config` | OSPF instance configuration |
 
-#### MPLS / Segment Routing *(SR OS only for now)*
+### MPLS / Segment Routing *(SR OS only for now)*
 | Tool | Description |
 |---|---|
 | `get_mpls_lsps` | Active MPLS LSPs |
 | `get_sr_sid_table` | Segment Routing SID binding table |
 | `get_sr_config` | Segment Routing configuration |
 
-#### VRF / L3VPN *(SR OS only for now)*
+### VRF / L3VPN *(SR OS only for now)*
 | Tool | Description |
 |---|---|
 | `get_vrfs` | All VRFs / network-instances |
 | `get_vrf_routes` | Route table for a specific VRF |
 | `get_vrf_interfaces` | Interfaces bound to a specific VRF |
 
-#### Logging *(SR OS only for now)*
+### Logging *(SR OS only for now)*
 | Tool | Description |
 |---|---|
 | `get_log_events` | Recent log events — `count` (default 50) and `severity` filter params |
 | `get_log_config` | Logging destinations configuration |
 
-> **Note:** IGP, MPLS/SR, VRF, and Logging unified tools are wired up but the SR OS backend implementations are Phase 4 work. Calling them today returns `"Error: <method> is not implemented for NOS 'sros'."` until Phase 4 lands.
-
-### SR OS vendor tools
-
-#### System
-| Tool | Description |
-|---|---|
-| `sros_list_nodes` | List all discovered SR OS nodes and their hostnames |
-| `sros_system_info` | Get system information (version, uptime, etc.) |
-| `sros_system_alarms` | Get active system alarms |
-
-#### Interfaces
-| Tool | Description |
-|---|---|
-| `sros_get_ports` | List physical ports and their operational state |
-| `sros_get_interfaces` | List router interfaces in the Base routing instance |
-| `sros_get_interface_state` | Get detailed state for a specific interface |
-| `sros_set_interface_description` | Set an interface description (supports `dry_run`) |
-
-#### BGP
-| Tool | Description |
-|---|---|
-| `sros_bgp_summary` | BGP summary statistics from the Base routing instance |
-| `sros_bgp_neighbors` | All BGP neighbor states |
-| `sros_bgp_neighbor` | Detailed state for a specific BGP neighbor |
-| `sros_bgp_config` | BGP configuration from the Base routing instance |
-
-#### EVPN / VPLS
-| Tool | Description |
-|---|---|
-| `sros_evpn_list_services` | List all VPLS services on a node |
-| `sros_evpn_get_service` | Get configuration for a specific VPLS service |
-| `sros_evpn_get_service_state` | Get operational state for a specific VPLS service |
-| `sros_evpn_provision_vpls` | Provision an EVPN VPLS service with VXLAN (supports `dry_run`) |
-| `sros_evpn_delete_vpls` | Delete a VPLS service (supports `dry_run`) |
+> **Note:** IGP, MPLS/SR, VRF, and Logging tools are wired up but SR OS backend implementations are Phase 4 work. Calling them today returns `"Error: <method> is not implemented for NOS 'sros'."` until Phase 4 lands.
 
 Write tools that support `dry_run: true` show the full gNMI payload that would be sent without making any changes to the device.
 
@@ -231,16 +227,14 @@ Once the lab is running, start the MCP server from the repository root — it wi
 
 ```
 src/netmcp/
-├── server.py          # FastMCP entrypoint — builds REGISTRY, registers unified + vendor tools
+├── server.py          # FastMCP entrypoint — builds REGISTRY, registers all unified tools
 ├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery
 ├── registry.py        # NOSBackend Protocol and NotImplementedBackend
-├── dispatch.py        # Unified cross-vendor tools (24 tools)
+├── dispatch.py        # Unified cross-vendor tools (29 tools)
 ├── nos/
 │   ├── sros/          # Nokia SR OS — fully implemented
 │   │   ├── backend.py # SROSBackend — implements NOSBackend Protocol
-│   │   ├── client.py  # gNMI transport (gnmi_get / gnmi_set)
-│   │   └── contexts/  # sros_* vendor tools
-│   │       ├── system.py, interfaces.py, bgp.py, evpn.py
+│   │   └── client.py  # gNMI transport (gnmi_get / gnmi_set)
 │   ├── srl/           # Nokia SR Linux — placeholder (Phase 3)
 │   ├── eos/           # Arista EOS — placeholder
 │   ├── junos/         # Juniper JunOS — placeholder

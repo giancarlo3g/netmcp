@@ -21,6 +21,7 @@ class NOSBackend(Protocol):
     def get_system_alarms(self, node: NodeInfo) -> str: ...
 
     # interfaces
+    def get_ports(self, node: NodeInfo) -> str: ...
     def get_interfaces(self, node: NodeInfo) -> str: ...
     def get_interface_state(self, node: NodeInfo, interface_name: str) -> str: ...
     def set_interface_description(self, node: NodeInfo, interface_name: str, description: str, dry_run: bool) -> str: ...
@@ -48,8 +49,12 @@ class NOSBackend(Protocol):
     def get_vrf_routes(self, node: NodeInfo, vrf_name: str) -> str: ...
     def get_vrf_interfaces(self, node: NodeInfo, vrf_name: str) -> str: ...
 
-    # evpn (unified read)
+    # evpn (unified read / write)
     def get_evpn_instances(self, node: NodeInfo) -> str: ...
+    def get_evpn_instance(self, node: NodeInfo, instance_name: str) -> str: ...
+    def get_evpn_instance_state(self, node: NodeInfo, instance_name: str) -> str: ...
+    def provision_evpn_instance(self, node: NodeInfo, service_name: str, service_id: int, vni: int, evi: int, route_distinguisher: str, export_rt: str, import_rt: str, dry_run: bool) -> str: ...
+    def delete_evpn_instance(self, node: NodeInfo, instance_name: str, dry_run: bool) -> str: ...
 
     # logging
     def get_log_events(self, node: NodeInfo, count: int, severity: str) -> str: ...
@@ -75,6 +80,9 @@ class NotImplementedBackend:
 
     def get_system_alarms(self, node: NodeInfo) -> str:
         return self._not_impl("get_system_alarms")
+
+    def get_ports(self, node: NodeInfo) -> str:
+        return self._not_impl("get_ports")
 
     def get_interfaces(self, node: NodeInfo) -> str:
         return self._not_impl("get_interfaces")
@@ -132,6 +140,18 @@ class NotImplementedBackend:
 
     def get_evpn_instances(self, node: NodeInfo) -> str:
         return self._not_impl("get_evpn_instances")
+
+    def get_evpn_instance(self, node: NodeInfo, instance_name: str) -> str:
+        return self._not_impl("get_evpn_instance")
+
+    def get_evpn_instance_state(self, node: NodeInfo, instance_name: str) -> str:
+        return self._not_impl("get_evpn_instance_state")
+
+    def provision_evpn_instance(self, node: NodeInfo, service_name: str, service_id: int, vni: int, evi: int, route_distinguisher: str, export_rt: str, import_rt: str, dry_run: bool) -> str:
+        return self._not_impl("provision_evpn_instance")
+
+    def delete_evpn_instance(self, node: NodeInfo, instance_name: str, dry_run: bool) -> str:
+        return self._not_impl("delete_evpn_instance")
 
     def get_log_events(self, node: NodeInfo, count: int, severity: str) -> str:
         return self._not_impl("get_log_events")

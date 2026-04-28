@@ -98,10 +98,17 @@ def _find_netmcp_yml() -> Path | None:
     return None
 
 
-def _load_from_yml(path: Path) -> dict[str, NodeInfo]:
-    """Parse a netmcp.yml inventory file into {name: NodeInfo}."""
+def _load_from_yml(path: Path) -> dict[str, NodeInfo] | None:
+    """Parse a netmcp.yml inventory file into {name: NodeInfo}.
+
+    Returns None if the file is empty or contains only comments, so the
+    caller can fall through to the next discovery source.
+    """
     with open(path) as f:
         data = yaml.safe_load(f)
+
+    if not data:
+        return None
 
     nodes: dict[str, NodeInfo] = {}
     for entry in data.get("inventory", {}).get("nodes", []):
@@ -188,8 +195,9 @@ def load_nodes() -> dict[str, NodeInfo]:
     yml = _find_netmcp_yml()
     if yml:
         nodes = _load_from_yml(yml)
-        _log_startup(nodes, source=str(yml))
-        return nodes
+        if nodes is not None:
+            _log_startup(nodes, source=str(yml))
+            return nodes
 
     clab = _find_clab_file()
     if clab:

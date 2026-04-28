@@ -1,0 +1,15 @@
+services:
+  netmcp:
+    build: .
+    image: netmcp:latest
+    container_name: netmcp
+    ports:
+      - "8088:8088"
+    environment:
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8088"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./netmcp.yml:/app/netmcp.yml:ro
