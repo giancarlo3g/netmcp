@@ -1,12 +1,10 @@
-"""gNMI transport layer for SR OS nodes.
+"""gNMI transport layer for SR Linux nodes.
 
-SROS gNMI path conventions:
-  Config: nokia-conf:configure/...
-  State:  nokia-state:state/...
-
-List keys use unquoted values, e.g.:
-  router[router-name=Base]
-  service/vpls[service-name=1]
+SRL gNMI path conventions:
+  Paths have no vendor namespace prefix — use native YANG paths, e.g.:
+    /interface[name=ethernet-1/1]
+    /network-instance[name=my-mac-vrf]
+    /tunnel-interface[name=vxlan0]/vxlan-interface[index=100]
 """
 
 import contextlib
@@ -30,12 +28,13 @@ def _make_gc(node: NodeInfo) -> gNMIclient:
 
     A new client must be created before every call because pygnmi opens
     and closes the gRPC channel inside `with gc:`, consuming the client object.
+    SR Linux uses TLS with certificate verification skipped.
     """
     return gNMIclient(
         target=(node.fqdn, node.gnmi_port),
         username=node.username,
         password=resolve_password(node),
-        insecure=True,
+        skip_verify=True,
     )
 
 
@@ -91,10 +90,7 @@ def _set_path(gc: gNMIclient, path: str, value, operation: str = "update", encod
 def gnmi_get(node: NodeInfo, path: str) -> dict | None:
     """Perform a gNMI GET against the node at the given YANG path."""
     with _suppress_output():
-        try:
-            return _get_path(_make_gc(node), path)
-        except Exception:
-            return None
+        return _get_path(_make_gc(node), path)
 
 
 def gnmi_set(node: NodeInfo, path: str, value, operation: str = "update") -> dict | None:

@@ -111,7 +111,7 @@ def _load_from_yml(path: Path) -> dict[str, NodeInfo] | None:
         return None
 
     nodes: dict[str, NodeInfo] = {}
-    for entry in data.get("inventory", {}).get("nodes", []):
+    for entry in data.get("inventory", {}).get("nodes") or []:
         nos_type = entry["nos"]
         transport = entry.get("transport", _NOS_TRANSPORT_DEFAULTS.get(nos_type, "gnmi"))
         node = NodeInfo(

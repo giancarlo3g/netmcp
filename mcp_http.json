@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "netmcp": {
+      "type": "http",
+      "url": "http://localhost:8088/mcp"
+    }
+  }
+}
