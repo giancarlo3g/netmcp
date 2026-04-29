@@ -13,3 +13,4 @@ services:
         required: false
     volumes:
       - ./netmcp.yml:/app/netmcp.yml:ro
+      - ./containerlab:/app/containerlab:ro

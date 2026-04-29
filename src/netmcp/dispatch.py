@@ -242,6 +242,8 @@ def register_unified_tools(
         export_rt: str,
         import_rt: str,
         dry_run: bool = False,
+        interface_name: str = "",
+        vlan_id: int = 0,
     ) -> str:
         """Provision an EVPN instance (VPLS + BGP-EVPN + VXLAN) on any node.
 
@@ -251,13 +253,15 @@ def register_unified_tools(
         Args:
             node: Node short name (e.g. "dcgw1").
             service_name: Name for the EVPN instance (e.g. "2").
-            service_id: Numeric service ID (1-2147483647).
+            service_id: Numeric service ID (1-2147483647). Required for SR OS; ignored for SR Linux.
             vni: VXLAN Network Identifier (1-16777215).
             evi: EVPN Instance number (1-65535).
             route_distinguisher: BGP route-distinguisher (e.g. "1:31").
             export_rt: BGP export route-target (e.g. "target:65011:1").
             import_rt: BGP import route-target (e.g. "target:65011:1").
             dry_run: If True, show what would be sent without making changes.
+            interface_name: Access port to attach (e.g. "ethernet-1/3"). Required for SR Linux.
+            vlan_id: VLAN ID for the bridged subinterface (2-4094). Required for SR Linux.
         """
         info, backend = _resolve(nodes, registry, node)
         if info is None:
@@ -265,6 +269,7 @@ def register_unified_tools(
         return backend.provision_evpn_instance(
             info, service_name, service_id, vni, evi,
             route_distinguisher, export_rt, import_rt, dry_run,
+            interface_name, vlan_id,
         )
 
     @mcp.tool()

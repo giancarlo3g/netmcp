@@ -1,10 +1,12 @@
+# This an example for netmcp.yml file
+
 # inventory:
-#   nodes: []
-#   # Example node entry:
-#   - name: router1
-#     fqdn: 192.168.1.1
-#     nos: sros
-#     transport: gnmi
-#     gnmi_port: 57400
-#     username: admin
-#     tags: []
+  # nodes:
+  # Example node entry:
+  # - name: router1
+  #   fqdn: 192.168.1.1
+  #   nos: sros
+  #   transport: gnmi
+  #   gnmi_port: 57400
+  #   username: admin
+  #   tags: []

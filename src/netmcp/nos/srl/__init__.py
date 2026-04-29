@@ -1,11 +1,11 @@
-"""Nokia SR Linux NOS backend — Phase 2."""
+"""Nokia SR Linux NOS backend."""
 
-from netmcp.registry import NotImplementedBackend
+from netmcp.nos.srl.backend import SRLBackend
 
 NOS_TYPE = "srl"
-BACKEND = NotImplementedBackend("srl", transport="gnmi")
+BACKEND = SRLBackend()
 
 
 def register_vendor_tools(mcp, nodes) -> None:
-    """SR Linux vendor tools — implemented in Phase 2."""
+    """SR Linux vendor tools — none yet; EVPN goes through unified dispatch."""
     pass

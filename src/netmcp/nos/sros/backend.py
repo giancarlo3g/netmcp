@@ -196,6 +196,8 @@ class SROSBackend(NotImplementedBackend):
         export_rt: str,
         import_rt: str,
         dry_run: bool,
+        interface_name: str = "",  # not used by SR OS
+        vlan_id: int = 0,          # not used by SR OS
     ) -> str:
         """Create a VPLS service with BGP-EVPN and VXLAN via gNMI update.
 
