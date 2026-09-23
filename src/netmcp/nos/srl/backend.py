@@ -48,6 +48,37 @@ class _MacVrfIntent(BaseModel):
         return v
 
 
+def _ns_get(d: dict, key: str, default=None):
+    """dict.get() that also matches a YANG module-prefixed key.
+
+    SR Linux json_ietf replies prefix keys that cross a module boundary,
+    e.g. "srl_nokia-network-instance:network-instance" or
+    "srl_nokia-bgp-evpn:bgp-instance".
+    """
+    if key in d:
+        return d[key]
+    for k, v in d.items():
+        if k.rsplit(":", 1)[-1] == key:
+            return v
+    return default
+
+
+def _vxlan_vnis(node: NodeInfo) -> dict[str, int]:
+    """Map vxlan-interface names (e.g. "vxlan0.10") to their ingress VNI."""
+    data = gnmi_get(node, "/tunnel-interface")
+    if data is None:
+        return {}
+    tunnels = _ns_get(data, "tunnel-interface", data)
+    tunnels = tunnels if isinstance(tunnels, list) else [tunnels]
+    vnis = {}
+    for tunnel in tunnels:
+        for vxlan in tunnel.get("vxlan-interface", []):
+            vni = vxlan.get("ingress", {}).get("vni")
+            if vni is not None:
+                vnis[f"{tunnel.get('name')}.{vxlan.get('index')}"] = vni
+    return vnis
+
+
 def _rollback(node: NodeInfo, service_name: str, vni: int, interface_name: str, vlan_id: int) -> None:
     """Best-effort rollback of a partially provisioned MAC-VRF."""
     gnmi_set(node, f"/network-instance[name={service_name}]", None, operation="delete")
@@ -70,7 +101,10 @@ class SRLBackend(NotImplementedBackend):
         data = gnmi_get(node, "/network-instance")
         if data is None:
             return f"No EVPN instances found on {node.name} ({node.fqdn})"
-        instances_raw = data if isinstance(data, list) else [data]
+        # The list arrives wrapped as {"srl_nokia-network-instance:network-instance": [...]}
+        instances_raw = _ns_get(data, "network-instance", data) if isinstance(data, dict) else data
+        instances_raw = instances_raw if isinstance(instances_raw, list) else [instances_raw]
+        vnis = None  # fetched lazily, only if a MAC-VRF exists
         instances = []
         for ni in instances_raw:
             if ni.get("type") not in ("mac-vrf", "srl_nokia-network-instance:mac-vrf"):
@@ -79,13 +113,12 @@ class SRLBackend(NotImplementedBackend):
             evi = None
             vxlan_ifaces = ni.get("vxlan-interface", [])
             if vxlan_ifaces:
-                # vxlan-interface name is like "vxlan0.100" — suffix is the VNI
-                vxlan_name = vxlan_ifaces[0].get("name", "")
-                parts = vxlan_name.rsplit(".", 1)
-                if len(parts) == 2 and parts[1].isdigit():
-                    vni = int(parts[1])
-            bgp_evpn = ni.get("protocols", {}).get("bgp-evpn", {})
-            bgp_instances = bgp_evpn.get("bgp-instance", [])
+                # The index in "vxlan0.10" is not the VNI; read ingress/vni from the tunnel-interface
+                if vnis is None:
+                    vnis = _vxlan_vnis(node)
+                vni = vnis.get(vxlan_ifaces[0].get("name", ""))
+            bgp_evpn = _ns_get(ni.get("protocols", {}), "bgp-evpn", {})
+            bgp_instances = _ns_get(bgp_evpn, "bgp-instance", [])
             if bgp_instances:
                 evi = bgp_instances[0].get("evi")
             instances.append({
