@@ -9,6 +9,9 @@ Junos gNMI conventions:
     under the `juniper` origin, e.g. `juniper:/configuration/protocols/bgp`.
   - Operational state is only served over Subscribe. Mode ONCE sends every leaf
     under the path as a PROTO-encoded update, then a sync_response.
+  - Set writes native config under the `juniper` origin with JSON_IETF values shaped
+    like a Get reply. One SetRequest is one commit: if any part is rejected, nothing
+    is applied.
   - Junos rejects the QoS marking pygnmi sends by default, and pygnmi's
     subscribe2() parser cannot decode leaflist values, so subscriptions use the
     raw protobuf stream.
@@ -156,3 +159,27 @@ def gnmi_subscribe_once(node: NodeInfo, path: str) -> dict | None:
             except Exception as e:
                 raise RuntimeError(f"gNMI SUBSCRIBE failed for path {path!r}: {e}") from e
     return _descend(_updates_to_tree(messages), gnmi_path_generator(path).elem)
+
+
+def gnmi_set_batch(
+    node: NodeInfo,
+    updates: list[tuple[str, object]] | None = None,
+    deletes: list[str] | None = None,
+) -> dict:
+    """Send deletes and updates in one SetRequest, applied by Junos as a single commit.
+
+    Paths use the `juniper` origin (e.g. `juniper:/configuration/routing-instances/...`)
+    and values are JSON_IETF shaped like a Get reply. If any part is rejected
+    nothing is committed. Raises RuntimeError with the device's error message.
+    """
+    with _suppress_output():
+        gc = _make_gc(node)
+        with gc:
+            try:
+                return gc.set(
+                    update=updates or None,
+                    delete=deletes or None,
+                    encoding="json_ietf",
+                )
+            except Exception as e:
+                raise RuntimeError(f"gNMI SET failed: {e}") from e

@@ -56,7 +56,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 8. **`nos/eos/`** — `EOSBackend` implements the 5 EVPN methods (VLAN-based EVPN) and the 4 BGP methods using OpenConfig + Arista experimental YANG, no CLI origin. `client.py` connects insecure (no TLS) and exposes `gnmi_get(node, path, datatype="all")` and `gnmi_set_batch(node, updates, deletes)`, which sends one atomic SetRequest, so provision/delete need no rollback. See "gNMI path conventions (EOS)".
 
-9. **`nos/junos/`** — `JunOSBackend` implements the 4 BGP methods, YANG only (no `cli:` origin). State comes from OpenConfig over Subscribe ONCE; config comes from native Junos YANG over Get under the `juniper` origin. `client.py` exposes `gnmi_subscribe_once(node, path)` (nested dict rooted at `path`, or `None`) and `gnmi_get_config(node, paths)`. See "gNMI path conventions (Junos)".
+9. **`nos/junos/`** — `JunOSBackend` implements the 4 BGP methods and the 5 EVPN methods (vlan-based EVPN-VXLAN `mac-vrf`), YANG only (no `cli:` origin). State comes from OpenConfig over Subscribe ONCE; config is read and written as native Junos YANG under the `juniper` origin. `client.py` exposes `gnmi_subscribe_once(node, path)` (nested dict rooted at `path`, or `None`), `gnmi_get_config(node, paths)` and `gnmi_set_batch(node, updates, deletes)` (one SetRequest = one commit, so no rollback). See "gNMI path conventions (Junos)".
 
 10. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
 
@@ -107,6 +107,12 @@ class NodeInfo:
 - BGP state: `/network-instances/network-instance[name=DEFAULT]/protocols/protocol[identifier=BGP][name=DEFAULT]/bgp` (`global`, `neighbors/neighbor[neighbor-address=X]`). Both keys are `DEFAULT`, not `default`/`BGP`.
   - `get_bgp_summary` / `get_bgp_neighbors` produce the same compact view as EOS (via `utils/openconfig.py`). Junos does report `total-paths`/`total-prefixes`.
   - `get_bgp_neighbor` returns the OpenConfig state tree. `get_bgp_config` returns `{routing-options, protocols: {bgp}}` from native config.
+- **Set** writes native config under the `juniper` origin with JSON_IETF values shaped like the Get reply (no module prefixes; empty leaves are `[null]`). A SetRequest is committed atomically: a rejected part applies nothing.
+- EVPN instance = `juniper:/configuration/routing-instances/instance[name=X]` (`instance-type mac-vrf`, `service-type vlan-based`, `protocols/evpn {encapsulation vxlan, extended-vni-list}`, `vtep-source-interface lo0.0`, `route-distinguisher/rd-type`, `vrf-target/community`, `vlans/vlan[name=vlanN] {vlan-id, interface, vxlan {vni, ingress-node-replication}}`) + access unit `juniper:/configuration/interfaces/interface[name=et-0/0/2]/unit[name=N]` (`encapsulation vlan-bridge`, `vlan-id`).
+  - Lookup by instance name, VLAN name or VLAN id; the VLAN id is reported as the EVI; `evi`/`service_id` are ignored.
+  - Provision requires `interface_name` (`et-0/0/2` → unit = `vlan_id`, or `et-0/0/2.20`) and `vlan_id`. The parent port must already have `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` and is never modified. `export_rt` must equal `import_rt` (single `vrf-target community`). Delete removes the instance and its units.
+  - State: one Subscribe on `/network-instances/network-instance[name=X]` (`state`, `vlan`, `jnx-evpn` VTEPs/peers/interfaces, `mac-table-info`, `inter-instance-policies`). Several subscriptions in one request are served sequentially (~2x slower), so subscribe to the common root. `.../evpn` is not a valid path.
+  - The spine `ptx-gw` has no routing-instances (Get → NOT_FOUND → "No EVPN instances found").
 - gRPC honours `https_proxy`; `.mcp.json` sets `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
 
 ### Write tools and dry_run
