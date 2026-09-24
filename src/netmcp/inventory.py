@@ -34,6 +34,11 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "iosxr": "netconf",
 }
 
+# Per-NOS gNMI port defaults (EOS listens on 6030; the rest use GNMI_PORT)
+_NOS_GNMI_PORT_DEFAULTS: dict[str, int] = {
+    "eos": 6030,
+}
+
 
 @dataclass
 class NodeInfo:
@@ -119,7 +124,7 @@ def _load_from_yml(path: Path) -> dict[str, NodeInfo] | None:
             fqdn=entry["fqdn"],
             nos_type=nos_type,
             transport=transport,
-            gnmi_port=int(entry.get("gnmi_port", GNMI_PORT)),
+            gnmi_port=int(entry.get("gnmi_port", _NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT))),
             netconf_port=int(entry.get("netconf_port", 830)),
             username=entry.get("username", GNMI_USER),
             tags=list(entry.get("tags", [])),
@@ -179,6 +184,7 @@ def _load_from_clab(path: Path) -> dict[str, NodeInfo]:
             fqdn=fqdn,
             nos_type=nos_type,
             transport=transport,
+            gnmi_port=_NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT),
         )
     return nodes
 

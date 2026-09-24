@@ -4,8 +4,8 @@ Registers vendor-agnostic tools that route to the correct NOS backend based
 on each node's nos_type. These tools work across all supported NOS — the
 caller never needs to know the vendor.
 
-Vendor-specific tools (sros_*, srl_*, etc.) are registered separately by
-each NOS module and coexist with these unified tools.
+This is the only module that registers MCP tools. NOS modules under
+netmcp/nos/<nos>/ provide backends only; there are no vendor-specific tools.
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -255,13 +255,13 @@ def register_unified_tools(
             service_name: Name for the EVPN instance (e.g. "2").
             service_id: Numeric service ID (1-2147483647). Required for SR OS; ignored for SR Linux.
             vni: VXLAN Network Identifier (1-16777215).
-            evi: EVPN Instance number (1-65535).
+            evi: EVPN Instance number (1-65535). Ignored for EOS (VLAN-based; the VLAN id is the EVI).
             route_distinguisher: BGP route-distinguisher (e.g. "1:31").
-            export_rt: BGP export route-target (e.g. "target:65011:1").
-            import_rt: BGP import route-target (e.g. "target:65011:1").
+            export_rt: BGP export route-target (e.g. "target:65011:1"; EOS also accepts "65011:1").
+            import_rt: BGP import route-target (e.g. "target:65011:1"; EOS also accepts "65011:1").
             dry_run: If True, show what would be sent without making changes.
-            interface_name: Access port to attach (e.g. "ethernet-1/3"). Required for SR Linux.
-            vlan_id: VLAN ID for the bridged subinterface (2-4094). Required for SR Linux.
+            interface_name: Access port to attach (e.g. "ethernet-1/3" on SR Linux, "Ethernet1" on EOS). Required for SR Linux and EOS.
+            vlan_id: VLAN ID for the bridged subinterface / EOS VLAN (2-4094). Required for SR Linux and EOS.
         """
         info, backend = _resolve(nodes, registry, node)
         if info is None:

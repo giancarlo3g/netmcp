@@ -6,15 +6,15 @@ This directory is a placeholder for the Juniper JunOS NOS backend.
 
 ## How to implement
 
-See `CONTRIBUTING.md` in the repo root for the full step-by-step guide. In summary:
+Follow the fixed NOS layout (see "Architecture rules" in `CLAUDE.md`); `nos/srl/` and `nos/eos/` are the reference implementations.
 
-1. Add `ncclient>=0.6.0` to `pyproject.toml` dependencies.
-2. Create `client.py` — implement `netconf_get(node, filter)` / `netconf_edit(node, config)` using ncclient with JunOS YANG/XML.
-3. Create `backend.py` — subclass `NotImplementedBackend` from `netmcp.registry`, overriding each supported method.
-4. Create `contexts/` — add `system.py`, `interfaces.py`, `bgp.py` following the SR OS contexts as templates. Name tools `junos_*`.
-5. Update `__init__.py` — set `BACKEND = JunOSBackend()` and implement `register_vendor_tools()`.
-6. Add `"junos"` to `REGISTRY` in `src/netmcp/registry.py`.
-7. Call `junos.register_vendor_tools()` in `src/netmcp/server.py`.
+0. Add `ncclient>=0.6.0` to `pyproject.toml` dependencies.
+1. Create `client.py`: transport only. Implement `netconf_get(node, filter)` / `netconf_edit(node, config)` using ncclient with JunOS YANG/XML.
+2. Create `backend.py`: `JunOSBackend(NotImplementedBackend)` from `netmcp.registry`, overriding only `NOSBackend` Protocol methods. Parse replies with `netmcp.utils.yang.ns_get` and format output with `netmcp.utils.formatters`.
+3. Update `__init__.py`: set `BACKEND = JunOSBackend()`.
+4. `REGISTRY` in `src/netmcp/server.py` already maps `"junos"`, so nothing else needs registering.
+
+Do not add MCP tools, `contexts/` directories, or vendor-prefixed tools here. Every tool lives in `src/netmcp/dispatch.py`. A new capability means a new method on the `NOSBackend` Protocol in `registry.py` plus a unified tool in `dispatch.py`.
 
 ## Containerlab kind
 

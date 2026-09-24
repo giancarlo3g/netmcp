@@ -18,6 +18,7 @@ from netmcp.inventory import NodeInfo
 from netmcp.nos.srl.client import gnmi_get, gnmi_set
 from netmcp.registry import NotImplementedBackend
 from netmcp.utils.formatters import format_dry_run, format_node_results
+from netmcp.utils.yang import ns_get
 
 _FORBIDDEN_INTERFACES = {"ethernet-1/51", "ethernet-1/52", "system0", "mgmt0"}
 
@@ -48,27 +49,12 @@ class _MacVrfIntent(BaseModel):
         return v
 
 
-def _ns_get(d: dict, key: str, default=None):
-    """dict.get() that also matches a YANG module-prefixed key.
-
-    SR Linux json_ietf replies prefix keys that cross a module boundary,
-    e.g. "srl_nokia-network-instance:network-instance" or
-    "srl_nokia-bgp-evpn:bgp-instance".
-    """
-    if key in d:
-        return d[key]
-    for k, v in d.items():
-        if k.rsplit(":", 1)[-1] == key:
-            return v
-    return default
-
-
 def _vxlan_vnis(node: NodeInfo) -> dict[str, int]:
     """Map vxlan-interface names (e.g. "vxlan0.10") to their ingress VNI."""
     data = gnmi_get(node, "/tunnel-interface")
     if data is None:
         return {}
-    tunnels = _ns_get(data, "tunnel-interface", data)
+    tunnels = ns_get(data, "tunnel-interface", data)
     tunnels = tunnels if isinstance(tunnels, list) else [tunnels]
     vnis = {}
     for tunnel in tunnels:
@@ -102,7 +88,7 @@ class SRLBackend(NotImplementedBackend):
         if data is None:
             return f"No EVPN instances found on {node.name} ({node.fqdn})"
         # The list arrives wrapped as {"srl_nokia-network-instance:network-instance": [...]}
-        instances_raw = _ns_get(data, "network-instance", data) if isinstance(data, dict) else data
+        instances_raw = ns_get(data, "network-instance", data) if isinstance(data, dict) else data
         instances_raw = instances_raw if isinstance(instances_raw, list) else [instances_raw]
         vnis = None  # fetched lazily, only if a MAC-VRF exists
         instances = []
@@ -117,8 +103,8 @@ class SRLBackend(NotImplementedBackend):
                 if vnis is None:
                     vnis = _vxlan_vnis(node)
                 vni = vnis.get(vxlan_ifaces[0].get("name", ""))
-            bgp_evpn = _ns_get(ni.get("protocols", {}), "bgp-evpn", {})
-            bgp_instances = _ns_get(bgp_evpn, "bgp-instance", [])
+            bgp_evpn = ns_get(ni.get("protocols", {}), "bgp-evpn", {})
+            bgp_instances = ns_get(bgp_evpn, "bgp-instance", [])
             if bgp_instances:
                 evi = bgp_instances[0].get("evi")
             instances.append({

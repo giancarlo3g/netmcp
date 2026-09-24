@@ -1,10 +1,6 @@
-"""Arista EOS NOS backend — placeholder."""
+"""Arista EOS NOS backend."""
 
-from netmcp.registry import NotImplementedBackend
+from netmcp.nos.eos.backend import EOSBackend
 
 NOS_TYPE = "eos"
-BACKEND = NotImplementedBackend("eos", transport="gnmi")
-
-
-def register_vendor_tools(mcp, nodes) -> None:
-    pass
+BACKEND = EOSBackend()
