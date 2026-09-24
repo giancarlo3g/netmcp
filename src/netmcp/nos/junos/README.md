@@ -6,12 +6,12 @@ Every other method falls through to `NotImplementedBackend`.
 
 Tested against cJunos Evolved 25.4R1 (`juniper_cjunosevolved`).
 
-**Transport:** gNMI via pygnmi, port 57400, no TLS.
+**Transport:** gNMI via pygnmi, port 32767, no TLS.
 
 ## Enabling gNMI on the node
 
 ```
-set system services extension-service request-response grpc clear-text port 57400
+set system services extension-service request-response grpc clear-text port 32767
 ```
 
 ## How Junos serves gNMI

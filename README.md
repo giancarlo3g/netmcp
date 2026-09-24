@@ -2,8 +2,8 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes network routers from multiple vendors to LLM agents. It allows an AI assistant (such as Claude) to query and configure routers directly — reading BGP state, managing interfaces, provisioning EVPN services, and more — without knowing vendor-specific CLI syntax.
 
-**Currently implemented:** Nokia SR OS (via gNMI)
-**Placeholder support:** Nokia SR Linux, Arista EOS, Juniper JunOS, Cisco IOS-XR
+**Currently implemented (via gNMI):** Nokia SR OS (system, interfaces, BGP, EVPN), Nokia SR Linux (EVPN), Arista EOS (EVPN, BGP), Juniper Junos Evolved (BGP)
+**Placeholder support:** Cisco IOS-XR
 
 ## Prerequisites
 
@@ -115,6 +115,16 @@ inventory:
 ### 2. Containerlab auto-discovery
 
 If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upward from cwd and auto-discovers nodes by their containerlab kind. Override the topology file path with `NETMCP_CLAB_TOPOLOGY=/path/to/topo.yml`.
+
+### gNMI ports
+
+Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to override it.
+
+| NOS | Default port | Notes |
+|---|---|---|
+| SR OS, SR Linux | 57400 | |
+| Arista EOS | 6030 | |
+| Juniper Junos | 32767 | Enable with `set system services extension-service request-response grpc clear-text port 32767`. Don't use 57400: it is in the Linux ephemeral range (32768–60999), and Junos Evolved's internal `trace-relay` can take it as a source port at boot, leaving gNMI refusing connections. |
 
 ### Environment Variables
 
@@ -237,18 +247,20 @@ src/netmcp/
 │   │   ├── backend.py   # SROSBackend — implements NOSBackend Protocol
 │   │   └── client.py    # gNMI transport
 │   ├── srl/           # Nokia SR Linux — EVPN (MAC-VRF); same three files
-│   ├── eos/           # Arista EOS — EVPN (VLAN-based); same three files
-│   ├── junos/         # Juniper JunOS — placeholder
+│   ├── eos/           # Arista EOS — EVPN (VLAN-based), BGP; same three files
+│   ├── junos/         # Juniper Junos Evolved — BGP; same three files
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     ├── formatters.py  # Output formatting helpers
-    └── yang.py        # json_ietf reply helpers (ns_get, strip_prefix)
+    ├── yang.py        # json_ietf reply helpers (ns_get, strip_prefix)
+    └── openconfig.py  # OpenConfig list/leaf walking, compact BGP peer view (EOS, Junos)
 
 tests/
 └── unit/
     ├── test_dispatch.py     # dispatch routing, error handling, NotImplementedBackend
     ├── test_srl_backend.py  # SR Linux EVPN parsing
-    ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete
+    ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
+    ├── test_junos_backend.py # Junos BGP parsing
     └── test_structure.py    # enforces the layout below
 ```
 

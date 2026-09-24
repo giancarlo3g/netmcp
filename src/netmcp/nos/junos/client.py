@@ -1,8 +1,9 @@
 """gNMI transport layer for Juniper Junos (Evolved) nodes.
 
 Junos gNMI conventions:
-  - Port 57400 (`system services extension-service request-response grpc clear-text
-    port 57400`), no TLS, so the channel is opened insecure.
+  - Port 32767 (`system services extension-service request-response grpc clear-text
+    port 32767`), no TLS, so the channel is opened insecure. Not 57400: it is in
+    the Linux ephemeral range, and a local client (trace-relay) can take it first.
   - Get only accepts type=CONFIG and JSON_IETF/ASCII encoding, and reads the
     `openconfig` origin by default. Native Junos config (junos-conf-* YANG) lives
     under the `juniper` origin, e.g. `juniper:/configuration/protocols/bgp`.

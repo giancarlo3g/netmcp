@@ -73,7 +73,7 @@ class NodeInfo:
     fqdn: str        # hostname: "clab-evpn-dcgw1"
     nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr"
     transport: str   # "gnmi" | "netconf"
-    gnmi_port: int   # default 57400 (6030 for eos, via _NOS_GNMI_PORT_DEFAULTS)
+    gnmi_port: int   # default 57400 (6030 for eos, 32767 for junos, via _NOS_GNMI_PORT_DEFAULTS)
     username: str    # default "admin"
     tags: list[str]
 ```
@@ -101,7 +101,7 @@ class NodeInfo:
 
 ### gNMI path conventions (Junos)
 
-- Port 57400, no TLS (`set system services extension-service request-response grpc clear-text port 57400`).
+- Port 32767, no TLS (`set system services extension-service request-response grpc clear-text port 32767`). Not 57400: it sits in the Linux ephemeral range (32768–60999), and Evolved's `trace-relay` can take it as a source port at boot, so nginx (the gNMI front end) fails to bind.
 - **Get serves config only** (`type=CONFIG`, JSON_IETF or ASCII) and reads the `openconfig` origin by default, which is empty unless the node was configured through OpenConfig. Native config (`junos-conf-*` YANG) is under the **`juniper` origin**: `juniper:/configuration/protocols/bgp`, `juniper:/configuration/routing-options`. Do not use the `cli:` origin; it returns config text, not YANG.
 - **State is Subscribe-only**: mode ONCE, PROTO encoding, `no_qos_marking=True` (otherwise "Qos not supported"). pygnmi's `subscribe2()` cannot decode `leaflist_val`, so `client.py` reads the raw protobuf stream and rebuilds a nested dict. An unknown key returns only `sync_response` → `None`.
 - BGP state: `/network-instances/network-instance[name=DEFAULT]/protocols/protocol[identifier=BGP][name=DEFAULT]/bgp` (`global`, `neighbors/neighbor[neighbor-address=X]`). Both keys are `DEFAULT`, not `default`/`BGP`.
@@ -117,9 +117,11 @@ Write tools accept a `dry_run: bool = False` parameter. When `True`, they return
 
 The in-repo topology (`containerlab/nokia-evpn.clab.yml`) models a Nokia DC fabric: `clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`. The topology name drives FQDN construction: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when the topology sets `prefix: __lab-name`.
 
-`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 57400, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10 `mac-vrf-10`, VNI 1010, RT 65000:10.
+`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10 `mac-vrf-10`, VNI 1010, RT 65000:10.
 
 After changing backend code, reconnect the server (`/mcp` → netmcp → Reconnect) before testing through the MCP tools.
+
+If a node was unreachable while the server was running (e.g. a cJunos VM still booting after a redeploy), MCP calls to it can keep failing after ~5 s with an empty error even once gNMI is back, while the same backend code run in a fresh process works. Reconnect the server to clear it. cJunos Evolved takes several minutes to boot; wait until its gNMI port answers before querying it.
 
 ### Inventory
 

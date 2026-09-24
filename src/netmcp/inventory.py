@@ -36,9 +36,11 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "iosxr": "netconf",
 }
 
-# Per-NOS gNMI port defaults (EOS listens on 6030; the rest use GNMI_PORT)
+# Per-NOS gNMI port defaults (the rest use GNMI_PORT). Junos uses 32767 because
+# 57400 is inside the Linux ephemeral range, where Evolved's trace-relay can grab it.
 _NOS_GNMI_PORT_DEFAULTS: dict[str, int] = {
     "eos": 6030,
+    "junos": 32767,
 }
 
 
