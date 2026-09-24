@@ -123,7 +123,7 @@ Write tools accept a `dry_run: bool = False` parameter. When `True`, they return
 
 The in-repo topology (`containerlab/nokia-evpn.clab.yml`) models a Nokia DC fabric: `clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`. The topology name drives FQDN construction: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when the topology sets `prefix: __lab-name`.
 
-`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10 `mac-vrf-10`, VNI 1010, RT 65000:10.
+`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` is the spine/RR and has no EVPN instance.
 
 After changing backend code, reconnect the server (`/mcp` → netmcp → Reconnect) before testing through the MCP tools.
 
