@@ -20,6 +20,7 @@ from netmcp.inventory import NodeInfo
 from netmcp.nos.eos.client import gnmi_get, gnmi_set_batch
 from netmcp.registry import NotImplementedBackend
 from netmcp.utils.formatters import format_dry_run, format_node_results
+from netmcp.utils.openconfig import entries, leaf, peer_summary
 from netmcp.utils.yang import ns_get, strip_prefix
 
 VXLAN_IFACE = "Vxlan1"
@@ -64,54 +65,16 @@ class _VlanEvpnIntent(BaseModel):
         return v
 
 
-# ----------------------------------------------------------------------
-# Reply parsing
-# ----------------------------------------------------------------------
-
-def _entries(data, key: str) -> list:
-    """Return the list entries named `key` from a GET reply.
-
-    EOS may root the reply at the requested container or one level above it,
-    so wrapping containers are descended until `key` is found.
-    """
-    if data is None:
-        return []
-    if isinstance(data, list):
-        out = []
-        for item in data:
-            out.extend(_entries(item, key) or [item])
-        return out
-    found = ns_get(data, key)
-    if found is not None:
-        return found if isinstance(found, list) else [found]
-    for v in data.values():
-        if isinstance(v, dict):
-            nested = _entries(v, key)
-            if nested:
-                return nested
-    return []
-
-
-def _leaf(entry: dict, name: str):
-    """Read a leaf from an entry, looking at the entry itself then its config/state."""
-    val = ns_get(entry, name)
-    if val is None:
-        val = ns_get(ns_get(entry, "config", {}) or {}, name)
-    if val is None:
-        val = ns_get(ns_get(entry, "state", {}) or {}, name)
-    return val
-
-
 def _vlans(node: NodeInfo) -> dict[int, dict]:
     """Map VLAN id -> OpenConfig VLAN entry."""
-    return {int(_leaf(v, "vlan-id")): v for v in _entries(gnmi_get(node, VLANS_PATH), "vlan") if _leaf(v, "vlan-id") is not None}
+    return {int(leaf(v, "vlan-id")): v for v in entries(gnmi_get(node, VLANS_PATH), "vlan") if leaf(v, "vlan-id") is not None}
 
 
 def _vlan_vnis(node: NodeInfo) -> dict[int, int]:
     """Map VLAN id -> VNI from Vxlan1."""
     vnis = {}
-    for m in _entries(gnmi_get(node, VXLAN_PATH), "vlan-to-vni"):
-        vlan, vni = _leaf(m, "vlan"), _leaf(m, "vni")
+    for m in entries(gnmi_get(node, VXLAN_PATH), "vlan-to-vni"):
+        vlan, vni = leaf(m, "vlan"), leaf(m, "vni")
         if vlan is not None and vni is not None:
             vnis[int(vlan)] = int(vni)
     return vnis
@@ -120,8 +83,8 @@ def _vlan_vnis(node: NodeInfo) -> dict[int, int]:
 def _evpn_instances(node: NodeInfo) -> list[dict]:
     """Return VLAN / VLAN-aware-bundle evpn-instance entries."""
     instances = []
-    for inst in _entries(gnmi_get(node, EVPN_PATH), "evpn-instance"):
-        if strip_prefix(_leaf(inst, "instance-type") or "VLAN") == "VPWS":
+    for inst in entries(gnmi_get(node, EVPN_PATH), "evpn-instance"):
+        if strip_prefix(leaf(inst, "instance-type") or "VLAN") == "VPWS":
             continue
         instances.append(inst)
     return instances
@@ -129,11 +92,11 @@ def _evpn_instances(node: NodeInfo) -> list[dict]:
 
 def _instance_vlan_ids(inst: dict) -> list[int]:
     vlans = ns_get(inst, "vlans", {}) or {}
-    return [int(_leaf(v, "vlan-id")) for v in _entries(vlans, "vlan") if _leaf(v, "vlan-id") is not None]
+    return [int(leaf(v, "vlan-id")) for v in entries(vlans, "vlan") if leaf(v, "vlan-id") is not None]
 
 
 def _vlan_name(vlan_entry: dict | None) -> str | None:
-    return _leaf(vlan_entry, "name") if vlan_entry else None
+    return leaf(vlan_entry, "name") if vlan_entry else None
 
 
 def _collect(node: NodeInfo) -> list[dict]:
@@ -148,7 +111,7 @@ def _collect(node: NodeInfo) -> list[dict]:
         vlan_ids = _instance_vlan_ids(inst)
         vlan_id = vlan_ids[0] if vlan_ids else None
         records.append({
-            "evpn_name": _leaf(inst, "name"),
+            "evpn_name": leaf(inst, "name"),
             "vlan_id": vlan_id,
             "vlan_ids": vlan_ids,
             "vlan": vlans.get(vlan_id),
@@ -194,7 +157,7 @@ def _vlan_in_trunk_list(vlan_id: int, trunk_vlans: list) -> bool:
 def _trunk_interfaces(node: NodeInfo, vlan_id: int) -> list[dict]:
     """Return [{name, trunk-vlans}] for interfaces whose trunk list names vlan_id explicitly."""
     result = []
-    for iface in _entries(gnmi_get(node, "/interfaces"), "interface"):
+    for iface in entries(gnmi_get(node, "/interfaces"), "interface"):
         eth = ns_get(iface, "ethernet") or {}
         cfg = ns_get(ns_get(eth, "switched-vlan") or {}, "config") or {}
         trunk = ns_get(cfg, "trunk-vlans") or []
@@ -213,38 +176,8 @@ BGP_PATH = (
 )
 
 
-def _active_afi_safis(nbr: dict) -> dict[str, dict]:
-    """Map active AFI-SAFI name (e.g. "L2VPN_EVPN") -> {received, sent, installed}."""
-    afis = {}
-    for afi in _entries(ns_get(nbr, "afi-safis") or {}, "afi-safi"):
-        state = ns_get(afi, "state") or {}
-        if not ns_get(state, "active"):
-            continue
-        prefixes = ns_get(state, "prefixes") or {}
-        afis[strip_prefix(_leaf(afi, "afi-safi-name"))] = {
-            "received": ns_get(prefixes, "received"),
-            "sent": ns_get(prefixes, "sent"),
-            "installed": ns_get(prefixes, "installed"),
-        }
-    return afis
-
-
-def _peer_summary(nbr: dict) -> dict:
-    """Compact, vendor-neutral view of one OpenConfig BGP neighbor."""
-    state = ns_get(nbr, "state") or {}
-    return {
-        "peer": _leaf(nbr, "neighbor-address"),
-        "peer-as": _leaf(nbr, "peer-as"),
-        "peer-group": _leaf(nbr, "peer-group"),
-        "state": strip_prefix(ns_get(state, "session-state")),
-        "established-transitions": ns_get(state, "established-transitions"),
-        "last-established": ns_get(state, "last-established"),
-        "afi-safis": _active_afi_safis(nbr),
-    }
-
-
 def _bgp_neighbors(node: NodeInfo) -> list[dict]:
-    return _entries(gnmi_get(node, f"{BGP_PATH}/neighbors"), "neighbor")
+    return entries(gnmi_get(node, f"{BGP_PATH}/neighbors"), "neighbor")
 
 
 class EOSBackend(NotImplementedBackend):
@@ -264,15 +197,15 @@ class EOSBackend(NotImplementedBackend):
             return f"Error: could not retrieve BGP summary from {node.name} ({node.fqdn})"
         glob = ns_get(glob, "global", glob)
         state = ns_get(glob, "state") or {}
-        peers = [_peer_summary(n) for n in _bgp_neighbors(node)]
+        peers = [peer_summary(n) for n in _bgp_neighbors(node)]
         # EOS may omit total-paths/total-prefixes; only report what the device does
         totals = {
             k: ns_get(state, k) for k in ("total-paths", "total-prefixes")
             if ns_get(state, k) is not None
         }
         return format_node_results({node.name: {
-            "as": _leaf(glob, "as"),
-            "router-id": _leaf(glob, "router-id"),
+            "as": leaf(glob, "as"),
+            "router-id": leaf(glob, "router-id"),
             **totals,
             "peers": {
                 "total": len(peers),
@@ -285,7 +218,7 @@ class EOSBackend(NotImplementedBackend):
 
     def get_bgp_neighbors(self, node: NodeInfo) -> str:
         """Return a compact view (state, AS, active AFI-SAFI prefix counts) of every BGP neighbor."""
-        peers = [_peer_summary(n) for n in _bgp_neighbors(node)]
+        peers = [peer_summary(n) for n in _bgp_neighbors(node)]
         if not peers:
             return f"No BGP neighbors found on {node.name} ({node.fqdn})"
         return format_node_results({node.name: peers})
@@ -318,7 +251,7 @@ class EOSBackend(NotImplementedBackend):
             return f"No EVPN instances found on {node.name} ({node.fqdn})"
         instances = [{
             "name": _vlan_name(rec["vlan"]) or rec["evpn_name"],
-            "type": strip_prefix(_leaf(rec["evpn"], "instance-type") or "VLAN").lower(),
+            "type": strip_prefix(leaf(rec["evpn"], "instance-type") or "VLAN").lower(),
             "vni": rec["vni"],
             "evi": rec["vlan_id"],
         } for rec in records]

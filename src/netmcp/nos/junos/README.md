@@ -1,26 +1,38 @@
-# Juniper JunOS Backend
+# Juniper Junos Backend
 
-This directory is a placeholder for the Juniper JunOS NOS backend.
+`JunOSBackend` implements the 4 BGP methods (`get_bgp_summary`, `get_bgp_neighbors`,
+`get_bgp_neighbor`, `get_bgp_config`) over gNMI, using YANG only (no `cli:` origin).
+Every other method falls through to `NotImplementedBackend`.
 
-**Transport:** NETCONF (via `ncclient`)
+Tested against cJunos Evolved 25.4R1 (`juniper_cjunosevolved`).
 
-## How to implement
+**Transport:** gNMI via pygnmi, port 57400, no TLS.
 
-Follow the fixed NOS layout (see "Architecture rules" in `CLAUDE.md`); `nos/srl/` and `nos/eos/` are the reference implementations.
+## Enabling gNMI on the node
 
-0. Add `ncclient>=0.6.0` to `pyproject.toml` dependencies.
-1. Create `client.py`: transport only. Implement `netconf_get(node, filter)` / `netconf_edit(node, config)` using ncclient with JunOS YANG/XML.
-2. Create `backend.py`: `JunOSBackend(NotImplementedBackend)` from `netmcp.registry`, overriding only `NOSBackend` Protocol methods. Parse replies with `netmcp.utils.yang.ns_get` and format output with `netmcp.utils.formatters`.
-3. Update `__init__.py`: set `BACKEND = JunOSBackend()`.
-4. `REGISTRY` in `src/netmcp/server.py` already maps `"junos"`, so nothing else needs registering.
+```
+set system services extension-service request-response grpc clear-text port 57400
+```
 
-Do not add MCP tools, `contexts/` directories, or vendor-prefixed tools here. Every tool lives in `src/netmcp/dispatch.py`. A new capability means a new method on the `NOSBackend` Protocol in `registry.py` plus a unified tool in `dispatch.py`.
+## How Junos serves gNMI
 
-## Containerlab kind
+| Need | RPC | Path | Encoding |
+|---|---|---|---|
+| Config | Get (`type=CONFIG` only) | `juniper:/configuration/...` (native `junos-conf-*` YANG) | JSON_IETF |
+| State | Subscribe, mode ONCE | OpenConfig, e.g. `/network-instances/network-instance[name=DEFAULT]/...` | PROTO |
 
-`juniper_vjunosrouter` → auto-discovered as `nos_type = "junos"`.
+- Get rejects `STATE`/`ALL`, so operational state is only available over Subscribe.
+- Get reads the `openconfig` origin by default. That tree is empty unless the node was
+  configured through OpenConfig, so native config needs the `juniper` origin.
+- The OpenConfig default instance and BGP protocol are both keyed `DEFAULT`:
+  `network-instance[name=DEFAULT]/protocols/protocol[identifier=BGP][name=DEFAULT]`.
+- Subscribe needs `no_qos_marking=True` (Junos answers "Qos not supported" otherwise),
+  and only PROTO/JSON encodings. `client.gnmi_subscribe_once()` reads the raw protobuf
+  stream because pygnmi's `subscribe2()` parser cannot decode `leaflist_val`. It merges
+  the per-leaf updates into a nested dict rooted at the requested path, so the backend
+  can reuse `utils/openconfig.py` like EOS does.
+- An unknown key (e.g. a neighbor that does not exist) returns only a `sync_response`.
 
-## Useful references
+## Containerlab kinds
 
-- JunOS NETCONF: `https://www.juniper.net/documentation/us/en/software/junos/netconf/`
-- JunOS YANG models: `https://github.com/Juniper/yang`
+`juniper_cjunosevolved`, `juniper_vjunosevolved`, `juniper_vjunosrouter` → `nos_type = "junos"`.
