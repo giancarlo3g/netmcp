@@ -2,8 +2,8 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes network routers from multiple vendors to LLM agents. It allows an AI assistant (such as Claude) to query and configure routers directly — reading BGP state, managing interfaces, provisioning EVPN services, and more — without knowing vendor-specific CLI syntax.
 
-**Currently implemented:** Nokia SR OS (via gNMI)
-**Placeholder support:** Nokia SR Linux, Arista EOS, Juniper JunOS, Cisco IOS-XR
+**Currently implemented (via gNMI):** Nokia SR OS (system, interfaces, BGP, EVPN), Nokia SR Linux (EVPN), Arista EOS (EVPN, BGP), Juniper Junos Evolved (EVPN, BGP)
+**Placeholder support:** Cisco IOS-XR
 
 ## Prerequisites
 
@@ -116,6 +116,16 @@ inventory:
 
 If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upward from cwd and auto-discovers nodes by their containerlab kind. Override the topology file path with `NETMCP_CLAB_TOPOLOGY=/path/to/topo.yml`.
 
+### gNMI ports
+
+Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to override it.
+
+| NOS | Default port | Notes |
+|---|---|---|
+| SR OS, SR Linux | 57400 | |
+| Arista EOS | 6030 | |
+| Juniper Junos | 32767 | Enable with `set system services extension-service request-response grpc clear-text port 32767`. Don't use 57400: it is in the Linux ephemeral range (32768–60999), and Junos Evolved's internal `trace-relay` can take it as a source port at boot, leaving gNMI refusing connections. |
+
 ### Environment Variables
 
 | Variable | Description |
@@ -161,6 +171,17 @@ All tools are vendor-agnostic and dispatch automatically to the correct NOS back
 | `get_evpn_instance_state` | Operational state for a specific EVPN instance by name |
 | `provision_evpn_instance` | Create an EVPN instance (VPLS + BGP-EVPN + VXLAN) — supports `dry_run` |
 | `delete_evpn_instance` | Delete an EVPN instance — supports `dry_run` |
+
+How each NOS models an EVPN instance, and what `provision_evpn_instance` needs:
+
+| NOS | EVPN instance | Provision needs | Notes |
+|---|---|---|---|
+| SR OS | VPLS service with BGP-EVPN + VXLAN | `service_id`, `evi` | |
+| SR Linux | `mac-vrf` + bridged subinterface + `vxlan0.N` tunnel interface | `interface_name` (e.g. `ethernet-1/3`), `vlan_id` | |
+| EOS | VLAN + Vxlan1 VLAN-to-VNI + `router bgp / vlan N` | `interface_name` (trunk port, e.g. `Ethernet1`), `vlan_id` | VLAN id is reported as the EVI; `evi`/`service_id` ignored |
+| Junos | vlan-based `mac-vrf` routing-instance (VXLAN, VTEP source `lo0.0`) + `vlan-bridge` access unit | `interface_name` (`et-0/0/2`, unit = `vlan_id`, or `et-0/0/2.20`), `vlan_id` | `export_rt` must equal `import_rt` (one `vrf-target`); the parent port needs `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` already; VLAN id is reported as the EVI |
+
+On EOS and Junos, provision and delete are a single atomic gNMI Set: if the device rejects any part, nothing is applied.
 
 ### IGP *(SR OS only for now)*
 | Tool | Description |
@@ -237,18 +258,20 @@ src/netmcp/
 │   │   ├── backend.py   # SROSBackend — implements NOSBackend Protocol
 │   │   └── client.py    # gNMI transport
 │   ├── srl/           # Nokia SR Linux — EVPN (MAC-VRF); same three files
-│   ├── eos/           # Arista EOS — EVPN (VLAN-based); same three files
-│   ├── junos/         # Juniper JunOS — placeholder
+│   ├── eos/           # Arista EOS — EVPN (VLAN-based), BGP; same three files
+│   ├── junos/         # Juniper Junos Evolved — EVPN (mac-vrf), BGP; same three files
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     ├── formatters.py  # Output formatting helpers
-    └── yang.py        # json_ietf reply helpers (ns_get, strip_prefix)
+    ├── yang.py        # json_ietf reply helpers (ns_get, strip_prefix)
+    └── openconfig.py  # OpenConfig list/leaf walking, compact BGP peer view (EOS, Junos)
 
 tests/
 └── unit/
     ├── test_dispatch.py     # dispatch routing, error handling, NotImplementedBackend
     ├── test_srl_backend.py  # SR Linux EVPN parsing
-    ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete
+    ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
+    ├── test_junos_backend.py # Junos EVPN parsing, provision, delete; BGP
     └── test_structure.py    # enforces the layout below
 ```
 

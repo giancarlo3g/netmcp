@@ -22,6 +22,8 @@ CLAB_KIND_TO_NOS: dict[str, str] = {
     "nokia_srlinux": "srl",
     "arista_ceos": "eos",
     "juniper_vjunosrouter": "junos",
+    "juniper_vjunosevolved": "junos",
+    "juniper_cjunosevolved": "junos",
     "cisco_xrd": "iosxr",
 }
 
@@ -30,13 +32,15 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "sros": "gnmi",
     "srl": "gnmi",
     "eos": "gnmi",
-    "junos": "netconf",
+    "junos": "gnmi",
     "iosxr": "netconf",
 }
 
-# Per-NOS gNMI port defaults (EOS listens on 6030; the rest use GNMI_PORT)
+# Per-NOS gNMI port defaults (the rest use GNMI_PORT). Junos uses 32767 because
+# 57400 is inside the Linux ephemeral range, where Evolved's trace-relay can grab it.
 _NOS_GNMI_PORT_DEFAULTS: dict[str, int] = {
     "eos": 6030,
+    "junos": 32767,
 }
 
 
@@ -62,12 +66,12 @@ def resolve_password(node: NodeInfo) -> str:
     """Resolve the management password for a node.
 
     Priority:
-      1. NETMCP_{NAME_UPPER}_PASSWORD   per-node env var
+      1. NETMCP_{NAME_UPPER}_PASSWORD   per-node env var ("-" becomes "_")
       2. NETMCP_DEFAULT_PASSWORD        global env var
       3. SROS_PASSWORD                  legacy alias (sros nodes only)
       4. NOS-specific hardcoded default
     """
-    per_node = os.environ.get(f"NETMCP_{node.name.upper()}_PASSWORD")
+    per_node = os.environ.get(f"NETMCP_{node.name.upper().replace('-', '_')}_PASSWORD")
     if per_node:
         return per_node
 

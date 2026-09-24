@@ -5,6 +5,8 @@
       "args": ["run", "netmcp"],
       "env": {
         "NETMCP_CLAB_TOPOLOGY": "/home/zaman/multivendor/multivendor.clab.yml",
+        "NETMCP_PTX_PASSWORD": "admin@123",
+        "NETMCP_PTX_GW_PASSWORD": "admin@123",
         "grpc_proxy": ""
       }
     }

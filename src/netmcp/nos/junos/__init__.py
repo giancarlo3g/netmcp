@@ -1,6 +1,6 @@
-"""Juniper JunOS NOS backend — placeholder."""
+"""Juniper Junos NOS backend."""
 
-from netmcp.registry import NotImplementedBackend
+from netmcp.nos.junos.backend import JunOSBackend
 
 NOS_TYPE = "junos"
-BACKEND = NotImplementedBackend("junos", transport="netconf")
+BACKEND = JunOSBackend()

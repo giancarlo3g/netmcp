@@ -6,15 +6,20 @@
     plus an optional README.md. Placeholders have only __init__.py (+ README.md).
   - Backends only implement NOSBackend Protocol methods; new capabilities go
     through registry.py + dispatch.py, never vendor-specific tools.
+  - Devices are reached only through YANG-modeled APIs (gNMI, NETCONF,
+    RESTCONF): no CLI libraries, no gNMI `cli:` origin / ASCII encoding, no
+    NETCONF RPCs that wrap CLI commands.
 
 If one of these tests fails, fix the code to fit the layout rather than
 changing the test. See "Architecture rules" in CLAUDE.md.
 """
 
+import ast
 import importlib
 import inspect
 import os
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -25,7 +30,8 @@ from netmcp.inventory import CLAB_KIND_TO_NOS
 from netmcp.registry import NOSBackend, NotImplementedBackend
 from netmcp.server import REGISTRY
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "netmcp"
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src" / "netmcp"
 NOS_DIR = SRC / "nos"
 ALLOWED_NOS_FILES = {"__init__.py", "backend.py", "client.py", "README.md"}
 NOS_NAMES = sorted(p.name for p in NOS_DIR.iterdir() if p.is_dir() and p.name != "__pycache__")
@@ -169,3 +175,92 @@ def test_registry_matches_nos_directories():
 def test_containerlab_kinds_map_to_known_nos():
     unknown = set(CLAB_KIND_TO_NOS.values()) - set(NOS_NAMES)
     assert not unknown, f"CLAB_KIND_TO_NOS maps to NOS types without a nos/ directory: {unknown}"
+
+
+# ---------------------------------------------------------------------------
+# Device access: YANG-modeled APIs only (gNMI, NETCONF, RESTCONF)
+# ---------------------------------------------------------------------------
+
+# Libraries that drive the device CLI (SSH/telnet screen-scraping or
+# command-execution APIs such as eAPI/NX-API).
+CLI_LIBRARIES = {
+    "netmiko", "paramiko", "scrapli", "napalm", "pyeapi", "jsonrpclib",
+    "jnpr", "pexpect", "telnetlib", "asyncssh", "fabric", "nornir_netmiko",
+    "nornir_scrapli", "nornir_napalm",
+}
+# gNMI `cli:` origin paths and NETCONF RPCs that wrap CLI commands.
+_CLI_STRING = re.compile(r"^\s*/?cli:|<(command|cli|exec|run-command)[\s>/]", re.I)
+# Keyword arguments that select a non-YANG origin or encoding.
+_CLI_KWARGS = {"origin": {"cli"}, "encoding": {"ascii"}}
+
+
+def _code_strings(tree):
+    """String constants in the module, excluding docstrings."""
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    return [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+    ]
+
+
+def test_no_cli_library_imports():
+    offenders = []
+    for p in _py_files():
+        for node in ast.walk(ast.parse(p.read_text())):
+            if isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods = [node.module]
+            else:
+                continue
+            offenders += [
+                f"{p.relative_to(SRC)}:{node.lineno} imports {m}"
+                for m in mods if m.split(".")[0] in CLI_LIBRARIES
+            ]
+    assert not offenders, (
+        f"Device access must use gNMI/NETCONF/RESTCONF with YANG models, not the CLI: {offenders}"
+    )
+
+
+def test_no_cli_library_dependencies():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    deps = list(project["project"].get("dependencies", []))
+    for group in project.get("dependency-groups", {}).values():
+        deps += [d for d in group if isinstance(d, str)]
+    names = {re.match(r"[A-Za-z0-9_.-]+", d).group(0).lower().replace("-", "_") for d in deps}
+    banned = {"junos_eznc", *CLI_LIBRARIES}
+    assert not names & banned, f"pyproject.toml depends on CLI libraries: {sorted(names & banned)}"
+
+
+def test_no_cli_origin_encoding_or_rpcs():
+    offenders = []
+    for p in _py_files():
+        tree = ast.parse(p.read_text())
+        offenders += [
+            f"{p.relative_to(SRC)}:{node.lineno} {node.value!r}"
+            for node in _code_strings(tree) if _CLI_STRING.search(node.value)
+        ]
+        offenders += [
+            f"{p.relative_to(SRC)}:{kw.lineno} {kw.arg}={kw.value.value!r}"
+            for node in ast.walk(tree) if isinstance(node, ast.Call)
+            for kw in node.keywords
+            if kw.arg in _CLI_KWARGS and isinstance(kw.value, ast.Constant)
+            and str(kw.value.value).lower() in _CLI_KWARGS[kw.arg]
+        ]
+        offenders += [
+            f"{p.relative_to(SRC)}:{val.lineno} {key.value}={val.value!r}"
+            for node in ast.walk(tree) if isinstance(node, ast.Dict)
+            for key, val in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and key.value in _CLI_KWARGS
+            and isinstance(val, ast.Constant) and str(val.value).lower() in _CLI_KWARGS[key.value]
+        ]
+    assert not offenders, (
+        "Use YANG paths (OpenConfig or native) instead of the CLI origin, ASCII encoding "
+        f"or CLI-wrapping RPCs: {offenders}"
+    )

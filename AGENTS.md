@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -35,6 +35,8 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 4. **New NOS = new directory + one `REGISTRY` entry** in `server.py` (plus its containerlab kind in `inventory.CLAB_KIND_TO_NOS`). Nothing else registers anything.
 5. **Shared helpers go in `utils/`** (`formatters.py`, `yang.py`), not copied between NOS directories and not imported across them (e.g. `nos/eos` must not import from `nos/srl`).
 6. **Every implemented backend gets `tests/unit/test_<nos>_backend.py`**, with `gnmi_get`/set mocked using reply shapes captured from a live node.
+7. **Device access is YANG-modeled APIs only: gNMI (gRPC), NETCONF, or RESTCONF.** Every read and write in `client.py` must target a YANG model (OpenConfig or the vendor's native YANG). Never use the CLI: no netmiko, paramiko/SSH screen-scraping, scrapli, or eAPI/NX-API command execution, and no CLI-based models or encodings that aren't YANG, such as gNMI's `cli:` origin, `ASCII` encoding for CLI text, or NETCONF RPCs that wrap CLI commands (`<command>`, `<cli>`). If a feature has no YANG path on a NOS, leave that method unimplemented (it falls back to `NotImplementedBackend`) rather than falling back to the CLI.
+   - gNMI uses **pygnmi** today. NETCONF or RESTCONF may be added when a NOS needs them (e.g. `ncclient` for NETCONF, `httpx` for RESTCONF), but the library stays inside that NOS's `client.py` or a shared transport in `utils/`. It must not leak into `backend.py`, `dispatch.py`, or `registry.py`.
 
 ### Data flow
 
@@ -54,9 +56,11 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 8. **`nos/eos/`** — `EOSBackend` implements the 5 EVPN methods (VLAN-based EVPN) and the 4 BGP methods using OpenConfig + Arista experimental YANG, no CLI origin. `client.py` connects insecure (no TLS) and exposes `gnmi_get(node, path, datatype="all")` and `gnmi_set_batch(node, updates, deletes)`, which sends one atomic SetRequest, so provision/delete need no rollback. See "gNMI path conventions (EOS)".
 
-9. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`) and `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values). Use these rather than re-implementing reply parsing per backend.
+9. **`nos/junos/`** — `JunOSBackend` implements the 4 BGP methods and the 5 EVPN methods (vlan-based EVPN-VXLAN `mac-vrf`), YANG only (no `cli:` origin). State comes from OpenConfig over Subscribe ONCE; config is read and written as native Junos YANG under the `juniper` origin. `client.py` exposes `gnmi_subscribe_once(node, path)` (nested dict rooted at `path`, or `None`), `gnmi_get_config(node, paths)` and `gnmi_set_batch(node, updates, deletes)` (one SetRequest = one commit, so no rollback). See "gNMI path conventions (Junos)".
 
-10. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
+10. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
+
+11. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
 
 ### NodeInfo
 
@@ -69,7 +73,7 @@ class NodeInfo:
     fqdn: str        # hostname: "clab-evpn-dcgw1"
     nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr"
     transport: str   # "gnmi" | "netconf"
-    gnmi_port: int   # default 57400 (6030 for eos, via _NOS_GNMI_PORT_DEFAULTS)
+    gnmi_port: int   # default 57400 (6030 for eos, 32767 for junos, via _NOS_GNMI_PORT_DEFAULTS)
     username: str    # default "admin"
     tags: list[str]
 ```
@@ -95,6 +99,22 @@ class NodeInfo:
   - `get_bgp_neighbor` returns the raw OpenConfig tree. `get_bgp_config` reads `BGP_PATH` with `datatype="config"`.
   - EOS does not report `total-paths`/`total-prefixes` in global state, so the summary omits them. Neighbor `peer-as` comes from state, because it's often inherited from the peer group.
 
+### gNMI path conventions (Junos)
+
+- Port 32767, no TLS (`set system services extension-service request-response grpc clear-text port 32767`). Not 57400: it sits in the Linux ephemeral range (32768–60999), and Evolved's `trace-relay` can take it as a source port at boot, so nginx (the gNMI front end) fails to bind.
+- **Get serves config only** (`type=CONFIG`, JSON_IETF or ASCII) and reads the `openconfig` origin by default, which is empty unless the node was configured through OpenConfig. Native config (`junos-conf-*` YANG) is under the **`juniper` origin**: `juniper:/configuration/protocols/bgp`, `juniper:/configuration/routing-options`. Do not use the `cli:` origin; it returns config text, not YANG.
+- **State is Subscribe-only**: mode ONCE, PROTO encoding, `no_qos_marking=True` (otherwise "Qos not supported"). pygnmi's `subscribe2()` cannot decode `leaflist_val`, so `client.py` reads the raw protobuf stream and rebuilds a nested dict. An unknown key returns only `sync_response` → `None`.
+- BGP state: `/network-instances/network-instance[name=DEFAULT]/protocols/protocol[identifier=BGP][name=DEFAULT]/bgp` (`global`, `neighbors/neighbor[neighbor-address=X]`). Both keys are `DEFAULT`, not `default`/`BGP`.
+  - `get_bgp_summary` / `get_bgp_neighbors` produce the same compact view as EOS (via `utils/openconfig.py`). Junos does report `total-paths`/`total-prefixes`.
+  - `get_bgp_neighbor` returns the OpenConfig state tree. `get_bgp_config` returns `{routing-options, protocols: {bgp}}` from native config.
+- **Set** writes native config under the `juniper` origin with JSON_IETF values shaped like the Get reply (no module prefixes; empty leaves are `[null]`). A SetRequest is committed atomically: a rejected part applies nothing.
+- EVPN instance = `juniper:/configuration/routing-instances/instance[name=X]` (`instance-type mac-vrf`, `service-type vlan-based`, `protocols/evpn {encapsulation vxlan, extended-vni-list}`, `vtep-source-interface lo0.0`, `route-distinguisher/rd-type`, `vrf-target/community`, `vlans/vlan[name=vlanN] {vlan-id, interface, vxlan {vni, ingress-node-replication}}`) + access unit `juniper:/configuration/interfaces/interface[name=et-0/0/2]/unit[name=N]` (`encapsulation vlan-bridge`, `vlan-id`).
+  - Lookup by instance name, VLAN name or VLAN id; the VLAN id is reported as the EVI; `evi`/`service_id` are ignored.
+  - Provision requires `interface_name` (`et-0/0/2` → unit = `vlan_id`, or `et-0/0/2.20`) and `vlan_id`. The parent port must already have `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` and is never modified. `export_rt` must equal `import_rt` (single `vrf-target community`). Delete removes the instance and its units.
+  - State: one Subscribe on `/network-instances/network-instance[name=X]` (`state`, `vlan`, `jnx-evpn` VTEPs/peers/interfaces, `mac-table-info`, `inter-instance-policies`). Several subscriptions in one request are served sequentially (~2x slower), so subscribe to the common root. `.../evpn` is not a valid path.
+  - The spine `ptx-gw` has no routing-instances (Get → NOT_FOUND → "No EVPN instances found").
+- gRPC honours `https_proxy`; `.mcp.json` sets `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
+
 ### Write tools and dry_run
 
 Write tools accept a `dry_run: bool = False` parameter. When `True`, they return the formatted gNMI payload via `format_dry_run()` without calling `gnmi_set()`. Write tools that take structured inputs (e.g. `provision_evpn_instance`) validate parameters with a Pydantic model (e.g. `_VplsIntent` in `backend.py`) before any network call.
@@ -103,9 +123,11 @@ Write tools accept a `dry_run: bool = False` parameter. When `True`, they return
 
 The in-repo topology (`containerlab/nokia-evpn.clab.yml`) models a Nokia DC fabric: `clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`. The topology name drives FQDN construction: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when the topology sets `prefix: __lab-name`.
 
-`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl) and `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin); other kinds are skipped. EVPN baseline: VLAN 10 `mac-vrf-10`, VNI 1010, RT 65000:10.
+`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` is the spine/RR and has no EVPN instance.
 
 After changing backend code, reconnect the server (`/mcp` → netmcp → Reconnect) before testing through the MCP tools.
+
+If a node was unreachable while the server was running (e.g. a cJunos VM still booting after a redeploy), MCP calls to it can keep failing after ~5 s with an empty error even once gNMI is back, while the same backend code run in a fresh process works. Reconnect the server to clear it. cJunos Evolved takes several minutes to boot; wait until its gNMI port answers before querying it.
 
 ### Inventory
 
@@ -117,7 +139,7 @@ Two discovery modes (in priority order):
 ### Credentials
 
 Per-node credential resolution order:
-1. `NETMCP_{NODE_UPPER}_PASSWORD` (per-node env var)
+1. `NETMCP_{NODE_UPPER}_PASSWORD` (per-node env var; `-` in the node name becomes `_`, e.g. `NETMCP_PTX_GW_PASSWORD`)
 2. `NETMCP_DEFAULT_PASSWORD` (global env var)
 3. `SROS_PASSWORD` (legacy alias, SR OS only)
 4. NOS-specific hardcoded default (e.g. `NokiaSros1!` for SR OS)
