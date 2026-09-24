@@ -2,7 +2,11 @@
   "mcpServers": {
     "netmcp": {
       "command": "uv",
-      "args": ["run", "netmcp"]
+      "args": ["run", "netmcp"],
+      "env": {
+        "NETMCP_CLAB_TOPOLOGY": "/home/zaman/multivendor/multivendor.clab.yml",
+        "grpc_proxy": ""
+      }
     }
   }
 }

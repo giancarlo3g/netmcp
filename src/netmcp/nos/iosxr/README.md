@@ -6,14 +6,14 @@ This directory is a placeholder for the Cisco IOS-XR NOS backend.
 
 ## How to implement
 
-See `CONTRIBUTING.md` in the repo root for the full step-by-step guide. In summary:
+Follow the fixed NOS layout (see "Architecture rules" in `CLAUDE.md`); `nos/srl/` and `nos/eos/` are the reference implementations.
 
-1. Create `client.py` — implement `gnmi_get(node, path)` / `gnmi_set(node, path, value, op)` using pygnmi with IOS-XR YANG paths (Cisco-IOS-XR-* namespaces), or ncclient for NETCONF.
-2. Create `backend.py` — subclass `NotImplementedBackend` from `netmcp.registry`, overriding each supported method.
-3. Create `contexts/` — add `system.py`, `interfaces.py`, `bgp.py` following the SR OS contexts as templates. Name tools `iosxr_*`.
-4. Update `__init__.py` — set `BACKEND = IOSXRBackend()` and implement `register_vendor_tools()`.
-5. Add `"iosxr"` to `REGISTRY` in `src/netmcp/registry.py`.
-6. Call `iosxr.register_vendor_tools()` in `src/netmcp/server.py`.
+1. Create `client.py`: transport only. Implement `gnmi_get(node, path)` / `gnmi_set(node, path, value, op)` using pygnmi with IOS-XR YANG paths (Cisco-IOS-XR-* namespaces), or ncclient for NETCONF.
+2. Create `backend.py`: `IOSXRBackend(NotImplementedBackend)` from `netmcp.registry`, overriding only `NOSBackend` Protocol methods. Parse replies with `netmcp.utils.yang.ns_get` and format output with `netmcp.utils.formatters`.
+3. Update `__init__.py`: set `BACKEND = IOSXRBackend()`.
+4. `REGISTRY` in `src/netmcp/server.py` already maps `"iosxr"`, so nothing else needs registering.
+
+Do not add MCP tools, `contexts/` directories, or vendor-prefixed tools here. Every tool lives in `src/netmcp/dispatch.py`. A new capability means a new method on the `NOSBackend` Protocol in `registry.py` plus a unified tool in `dispatch.py`.
 
 ## Containerlab kind
 

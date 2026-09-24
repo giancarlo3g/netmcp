@@ -230,23 +230,28 @@ src/netmcp/
 ├── server.py          # FastMCP entrypoint — builds REGISTRY, registers all unified tools
 ├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery
 ├── registry.py        # NOSBackend Protocol and NotImplementedBackend
-├── dispatch.py        # Unified cross-vendor tools (29 tools)
+├── dispatch.py        # Unified cross-vendor tools — the only place MCP tools are registered
 ├── nos/
-│   ├── sros/          # Nokia SR OS — fully implemented
-│   │   ├── backend.py # SROSBackend — implements NOSBackend Protocol
-│   │   └── client.py  # gNMI transport (gnmi_get / gnmi_set)
-│   ├── srl/           # Nokia SR Linux — placeholder (Phase 3)
-│   ├── eos/           # Arista EOS — placeholder
+│   ├── sros/          # Nokia SR OS — system, interfaces, BGP, EVPN
+│   │   ├── __init__.py  # NOS_TYPE, BACKEND
+│   │   ├── backend.py   # SROSBackend — implements NOSBackend Protocol
+│   │   └── client.py    # gNMI transport
+│   ├── srl/           # Nokia SR Linux — EVPN (MAC-VRF); same three files
+│   ├── eos/           # Arista EOS — EVPN (VLAN-based); same three files
 │   ├── junos/         # Juniper JunOS — placeholder
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
-    └── formatters.py  # Output formatting helpers
+    ├── formatters.py  # Output formatting helpers
+    └── yang.py        # json_ietf reply helpers (ns_get, strip_prefix)
 
 tests/
 └── unit/
-    └── test_dispatch.py  # 30 tests — dispatch routing, error handling, NotImplementedBackend
+    ├── test_dispatch.py     # dispatch routing, error handling, NotImplementedBackend
+    ├── test_srl_backend.py  # SR Linux EVPN parsing
+    ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete
+    └── test_structure.py    # enforces the layout below
 ```
 
 ## Adding a New NOS
 
-Each `nos/{vendor}/` directory is self-contained. See the `README.md` inside any placeholder directory (e.g. `nos/eos/README.md`) for step-by-step instructions.
+Each `nos/{vendor}/` directory has a fixed layout: `__init__.py` (`NOS_TYPE`, `BACKEND`), `backend.py` (a `NotImplementedBackend` subclass that overrides only `NOSBackend` Protocol methods), `client.py` (transport only), and an optional `README.md`. MCP tools are registered only in `dispatch.py`. `tests/unit/test_structure.py` fails if this layout is broken. See `nos/junos/README.md` for step-by-step instructions, and `nos/srl/` and `nos/eos/` for reference implementations.

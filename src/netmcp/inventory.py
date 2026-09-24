@@ -34,6 +34,11 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "iosxr": "netconf",
 }
 
+# Per-NOS gNMI port defaults (EOS listens on 6030; the rest use GNMI_PORT)
+_NOS_GNMI_PORT_DEFAULTS: dict[str, int] = {
+    "eos": 6030,
+}
+
 
 @dataclass
 class NodeInfo:
@@ -119,7 +124,7 @@ def _load_from_yml(path: Path) -> dict[str, NodeInfo] | None:
             fqdn=entry["fqdn"],
             nos_type=nos_type,
             transport=transport,
-            gnmi_port=int(entry.get("gnmi_port", GNMI_PORT)),
+            gnmi_port=int(entry.get("gnmi_port", _NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT))),
             netconf_port=int(entry.get("netconf_port", 830)),
             username=entry.get("username", GNMI_USER),
             tags=list(entry.get("tags", [])),
@@ -161,6 +166,7 @@ def _load_from_clab(path: Path) -> dict[str, NodeInfo]:
         topo = yaml.safe_load(f)
 
     topo_name = topo["name"]
+    prefix = topo.get("prefix")
     nodes: dict[str, NodeInfo] = {}
 
     for node_name, node_cfg in topo.get("topology", {}).get("nodes", {}).items():
@@ -168,13 +174,17 @@ def _load_from_clab(path: Path) -> dict[str, NodeInfo]:
         nos_type = CLAB_KIND_TO_NOS.get(kind)
         if nos_type is None:
             continue  # skip linux clients and other non-router kinds
-        fqdn = f"clab-{topo_name}-{node_name}"
+        if prefix == "__lab-name":
+            fqdn = f"{topo_name}-{node_name}"
+        else:
+            fqdn = f"clab-{topo_name}-{node_name}"
         transport = _NOS_TRANSPORT_DEFAULTS.get(nos_type, "gnmi")
         nodes[node_name] = NodeInfo(
             name=node_name,
             fqdn=fqdn,
             nos_type=nos_type,
             transport=transport,
+            gnmi_port=_NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT),
         )
     return nodes
 

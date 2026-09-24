@@ -1,25 +1,39 @@
 # Arista EOS Backend
 
-This directory is a placeholder for the Arista EOS NOS backend.
+**Transport:** gNMI (port 6030, no TLS) with OpenConfig and Arista experimental YANG models, no CLI origin.
 
-**Transport:** gNMI (preferred) or eAPI (HTTP/JSON)
+## Implemented
 
-## How to implement
+EVPN (VLAN-based) through the unified tools: `get_evpn_instances`, `get_evpn_instance`,
+`get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance`.
+BGP (default VRF) through `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor` and `get_bgp_config`,
+from `/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp`.
+The summary and neighbors calls return a compact per-peer view (state, AS, prefix counts for active AFI-SAFIs);
+the neighbor and config calls return the raw OpenConfig tree (config reads use `datatype="config"`).
 
-See `CONTRIBUTING.md` in the repo root for the full step-by-step guide. In summary:
+All other domains return a "not implemented" error.
 
-1. Create `client.py` — implement `gnmi_get(node, path)` / `gnmi_set(node, path, value, op)` using pygnmi with EOS YANG paths, or an eAPI client.
-2. Create `backend.py` — subclass `NotImplementedBackend` from `netmcp.registry`, overriding each supported method.
-3. Create `contexts/` — add `system.py`, `interfaces.py`, `bgp.py` following the SR OS contexts as templates. Name tools `eos_*`.
-4. Update `__init__.py` — set `BACKEND = EOSBackend()` and implement `register_vendor_tools()`.
-5. Add `"eos"` to `REGISTRY` in `src/netmcp/registry.py`.
-6. Call `eos.register_vendor_tools()` in `src/netmcp/server.py`.
+An EOS EVPN instance is spread over four YANG objects:
+
+| Piece | CLI | YANG path |
+|---|---|---|
+| VLAN | `vlan 10` / `name mac-vrf-10` | `/network-instances/network-instance[name=default]/vlans/vlan[vlan-id=10]` |
+| VLAN→VNI | `interface Vxlan1` / `vxlan vlan 10 vni 1010` | `/interfaces/interface[name=Vxlan1]/arista-vxlan/vlan-to-vnis/vlan-to-vni[vlan=10]` |
+| BGP EVPN | `router bgp` / `vlan 10` / `rd`, `route-target`, `redistribute learned` | `/arista/eos/evpn/evpn-instances/evpn-instance[name=10]` |
+| Access trunk | `switchport trunk allowed vlan add 10` | `/interfaces/interface[name=Ethernet1]/ethernet/switched-vlan/config/trunk-vlans` |
+
+Notes:
+
+- Instances can be looked up by VLAN name (`mac-vrf-10`) or VLAN id (`10`). The evpn-instance key is the VLAN id.
+- `evi` and `service_id` are ignored. VLAN-based EVPN is keyed by `vlan_id`, which is reported as the EVI.
+- Route-targets are accepted as `target:65000:10` or `65000:10`.
+- `interface_name` must be a trunk switchport. If its trunk list is empty (all VLANs allowed), it is left untouched.
+- Provision and delete are sent as one atomic SetRequest, so no rollback is needed.
 
 ## Containerlab kind
 
-`arista_ceos` → auto-discovered as `nos_type = "eos"`.
+`arista_ceos` → auto-discovered as `nos_type = "eos"`, with `gnmi_port = 6030`.
 
-## Useful references
+## References
 
-- EOS gNMI: `arista/yang` GitHub repo
-- eAPI: `https://{host}/command-api`
+- YANG models: https://github.com/aristanetworks/yang (`EOS-4.34.2F/experimental/eos/models/{evpn,vxlan}`)
