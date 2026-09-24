@@ -6,6 +6,11 @@
 
 EVPN (VLAN-based) through the unified tools: `get_evpn_instances`, `get_evpn_instance`,
 `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance`.
+BGP (default VRF) through `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor` and `get_bgp_config`,
+from `/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp`.
+The summary and neighbors calls return a compact per-peer view (state, AS, prefix counts for active AFI-SAFIs);
+the neighbor and config calls return the raw OpenConfig tree (config reads use `datatype="config"`).
+
 All other domains return a "not implemented" error.
 
 An EOS EVPN instance is spread over four YANG objects:

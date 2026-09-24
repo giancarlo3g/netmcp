@@ -13,7 +13,7 @@ os.environ.setdefault("NETMCP_NO_INVENTORY", "1")
 
 from netmcp.inventory import NodeInfo
 from netmcp.nos.eos import backend as eos_backend
-from netmcp.nos.eos.backend import EVPN_PATH, VLANS_PATH, VXLAN_PATH, EOSBackend
+from netmcp.nos.eos.backend import BGP_PATH, EVPN_PATH, VLANS_PATH, VXLAN_PATH, EOSBackend
 
 NODE = NodeInfo(name="ceos", fqdn="mv-ceos", nos_type="eos", gnmi_port=6030)
 
@@ -82,7 +82,7 @@ def fake_gnmi(monkeypatch):
         _sv("Ethernet4"): {"openconfig-vlan:interface-mode": "TRUNK", "openconfig-vlan:trunk-vlans": [30]},
     }
     sets = []
-    monkeypatch.setattr(eos_backend, "gnmi_get", lambda node, path: replies.get(path))
+    monkeypatch.setattr(eos_backend, "gnmi_get", lambda node, path, datatype="all": replies.get(path))
     monkeypatch.setattr(
         eos_backend, "gnmi_set_batch",
         lambda node, updates=None, deletes=None: sets.append({"updates": updates or [], "deletes": deletes or []}) or {},
@@ -201,3 +201,124 @@ def test_delete_batch(fake_gnmi):
 
 def test_delete_not_found(fake_gnmi):
     assert "not found" in EOSBackend().delete_evpn_instance(NODE, "nope", dry_run=False)
+
+
+# ---------------------------------------------------------------------------
+# BGP (reply shapes captured from mv-ceos)
+# ---------------------------------------------------------------------------
+
+def _afi(name: str, active: bool, received: int = 0, sent: int = 0) -> dict:
+    return {
+        "afi-safi-name": name,
+        "config": {"afi-safi-name": name},
+        "state": {
+            "active": active,
+            "afi-safi-name": name,
+            "prefixes": {"installed": received, "received": received, "sent": sent},
+        },
+    }
+
+
+def _bgp_neighbor(addr: str, received: int) -> dict:
+    return {
+        "neighbor-address": addr,
+        "config": {"neighbor-address": addr, "peer-group": "iBGP-evpn"},
+        "state": {
+            "neighbor-address": addr,
+            "peer-as": 65000,
+            "peer-group": "iBGP-evpn",
+            "session-state": "ESTABLISHED",
+            "established-transitions": "1",
+            "last-established": "1790102035963950634",
+        },
+        "afi-safis": {"afi-safi": [
+            _afi("openconfig-bgp-types:IPV4_UNICAST", False),
+            _afi("openconfig-bgp-types:L2VPN_EVPN", True, received=received, sent=1),
+        ]},
+    }
+
+
+BGP_GLOBAL = {"openconfig-network-instance:global": {
+    "config": {"as": 65000, "router-id": "192.1.1.2"},
+    "state": {"as": 65000, "router-id": "192.1.1.2"},
+}}
+
+BGP_NEIGHBORS = {"openconfig-network-instance:neighbor": [
+    _bgp_neighbor("192.1.2.1", received=4),
+    _bgp_neighbor("192.1.2.2", received=0),
+]}
+
+BGP_CONFIG = {
+    "openconfig-network-instance:global": {"config": {"as": 65000, "router-id": "192.1.1.2"}},
+    "openconfig-network-instance:peer-groups": {"peer-group": [{
+        "peer-group-name": "iBGP-evpn",
+        "config": {"peer-as": 65000, "peer-group-name": "iBGP-evpn", "send-community-type": ["EXTENDED"]},
+        "transport": {"config": {"local-address": "Loopback0"}},
+    }]},
+}
+
+
+@pytest.fixture
+def fake_bgp(monkeypatch):
+    replies = {
+        f"{BGP_PATH}/global": BGP_GLOBAL,
+        f"{BGP_PATH}/neighbors": BGP_NEIGHBORS,
+        f"{BGP_PATH}/neighbors/neighbor[neighbor-address=192.1.2.1]": _bgp_neighbor("192.1.2.1", 4),
+        BGP_PATH: BGP_CONFIG,
+    }
+    calls = []
+
+    def fake_get(node, path, datatype="all"):
+        calls.append((path, datatype))
+        return replies.get(path)
+
+    monkeypatch.setattr(eos_backend, "gnmi_get", fake_get)
+    return replies, calls
+
+
+def test_bgp_summary(fake_bgp):
+    result = json.loads(EOSBackend().get_bgp_summary(NODE))["ceos"]
+    assert result["as"] == 65000
+    assert result["router-id"] == "192.1.1.2"
+    assert result["peers"] == {"total": 2, "established": 2}
+    assert "total-paths" not in result  # EOS does not report it
+    assert result["neighbors"][0] == {
+        "peer": "192.1.2.1", "peer-as": 65000, "state": "ESTABLISHED",
+        "afi-safis": {"L2VPN_EVPN": {"received": 4, "sent": 1, "installed": 4}},
+    }
+
+
+def test_bgp_summary_counts_non_established(fake_bgp):
+    fake_bgp[0][f"{BGP_PATH}/neighbors"]["openconfig-network-instance:neighbor"][1]["state"]["session-state"] = "ACTIVE"
+    result = json.loads(EOSBackend().get_bgp_summary(NODE))["ceos"]
+    assert result["peers"] == {"total": 2, "established": 1}
+
+
+def test_bgp_summary_error_without_global(fake_bgp):
+    del fake_bgp[0][f"{BGP_PATH}/global"]
+    assert EOSBackend().get_bgp_summary(NODE).startswith("Error: could not retrieve BGP summary")
+
+
+def test_bgp_neighbors_compact_view(fake_bgp):
+    peers = json.loads(EOSBackend().get_bgp_neighbors(NODE))["ceos"]
+    assert [p["peer"] for p in peers] == ["192.1.2.1", "192.1.2.2"]
+    assert peers[0]["peer-group"] == "iBGP-evpn"
+    assert list(peers[0]["afi-safis"]) == ["L2VPN_EVPN"]  # inactive IPV4_UNICAST dropped, prefix stripped
+
+
+def test_bgp_neighbors_none(fake_bgp):
+    del fake_bgp[0][f"{BGP_PATH}/neighbors"]
+    assert "No BGP neighbors found" in EOSBackend().get_bgp_neighbors(NODE)
+
+
+def test_bgp_neighbor_raw_and_not_found(fake_bgp):
+    raw = json.loads(EOSBackend().get_bgp_neighbor(NODE, "192.1.2.1"))["ceos"]
+    assert raw["state"]["session-state"] == "ESTABLISHED"
+    assert EOSBackend().get_bgp_neighbor(NODE, "10.9.9.9").startswith("Error: could not retrieve BGP neighbor")
+
+
+def test_bgp_config_requests_config_only(fake_bgp):
+    _, calls = fake_bgp
+    result = json.loads(EOSBackend().get_bgp_config(NODE))["ceos"]
+    assert calls == [(BGP_PATH, "config")]
+    assert "openconfig-network-instance:peer-groups" in result

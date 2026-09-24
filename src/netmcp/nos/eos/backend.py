@@ -203,11 +203,106 @@ def _trunk_interfaces(node: NodeInfo, vlan_id: int) -> list[dict]:
     return result
 
 
+# ----------------------------------------------------------------------
+# BGP
+# ----------------------------------------------------------------------
+
+BGP_PATH = (
+    "/network-instances/network-instance[name=default]"
+    "/protocols/protocol[identifier=BGP][name=BGP]/bgp"
+)
+
+
+def _active_afi_safis(nbr: dict) -> dict[str, dict]:
+    """Map active AFI-SAFI name (e.g. "L2VPN_EVPN") -> {received, sent, installed}."""
+    afis = {}
+    for afi in _entries(ns_get(nbr, "afi-safis") or {}, "afi-safi"):
+        state = ns_get(afi, "state") or {}
+        if not ns_get(state, "active"):
+            continue
+        prefixes = ns_get(state, "prefixes") or {}
+        afis[strip_prefix(_leaf(afi, "afi-safi-name"))] = {
+            "received": ns_get(prefixes, "received"),
+            "sent": ns_get(prefixes, "sent"),
+            "installed": ns_get(prefixes, "installed"),
+        }
+    return afis
+
+
+def _peer_summary(nbr: dict) -> dict:
+    """Compact, vendor-neutral view of one OpenConfig BGP neighbor."""
+    state = ns_get(nbr, "state") or {}
+    return {
+        "peer": _leaf(nbr, "neighbor-address"),
+        "peer-as": _leaf(nbr, "peer-as"),
+        "peer-group": _leaf(nbr, "peer-group"),
+        "state": strip_prefix(ns_get(state, "session-state")),
+        "established-transitions": ns_get(state, "established-transitions"),
+        "last-established": ns_get(state, "last-established"),
+        "afi-safis": _active_afi_safis(nbr),
+    }
+
+
+def _bgp_neighbors(node: NodeInfo) -> list[dict]:
+    return _entries(gnmi_get(node, f"{BGP_PATH}/neighbors"), "neighbor")
+
+
 class EOSBackend(NotImplementedBackend):
     """Arista EOS backend. Dispatched to by unified tools."""
 
     def __init__(self) -> None:
         super().__init__(nos_type="eos", transport="gnmi")
+
+    # ------------------------------------------------------------------
+    # BGP
+    # ------------------------------------------------------------------
+
+    def get_bgp_summary(self, node: NodeInfo) -> str:
+        """Return BGP global state plus a one-line-per-peer summary for the default VRF."""
+        glob = gnmi_get(node, f"{BGP_PATH}/global")
+        if glob is None:
+            return f"Error: could not retrieve BGP summary from {node.name} ({node.fqdn})"
+        glob = ns_get(glob, "global", glob)
+        state = ns_get(glob, "state") or {}
+        peers = [_peer_summary(n) for n in _bgp_neighbors(node)]
+        # EOS may omit total-paths/total-prefixes; only report what the device does
+        totals = {
+            k: ns_get(state, k) for k in ("total-paths", "total-prefixes")
+            if ns_get(state, k) is not None
+        }
+        return format_node_results({node.name: {
+            "as": _leaf(glob, "as"),
+            "router-id": _leaf(glob, "router-id"),
+            **totals,
+            "peers": {
+                "total": len(peers),
+                "established": sum(p["state"] == "ESTABLISHED" for p in peers),
+            },
+            "neighbors": [
+                {k: p[k] for k in ("peer", "peer-as", "state", "afi-safis")} for p in peers
+            ],
+        }})
+
+    def get_bgp_neighbors(self, node: NodeInfo) -> str:
+        """Return a compact view (state, AS, active AFI-SAFI prefix counts) of every BGP neighbor."""
+        peers = [_peer_summary(n) for n in _bgp_neighbors(node)]
+        if not peers:
+            return f"No BGP neighbors found on {node.name} ({node.fqdn})"
+        return format_node_results({node.name: peers})
+
+    def get_bgp_neighbor(self, node: NodeInfo, peer_ip: str) -> str:
+        """Return the full OpenConfig tree (config + state) for one BGP neighbor."""
+        data = gnmi_get(node, f"{BGP_PATH}/neighbors/neighbor[neighbor-address={peer_ip}]")
+        if data is None:
+            return f"Error: could not retrieve BGP neighbor {peer_ip!r} from {node.name} ({node.fqdn})"
+        return format_node_results({node.name: data})
+
+    def get_bgp_config(self, node: NodeInfo) -> str:
+        """Return the BGP configuration (global, neighbors, peer-groups) of the default VRF."""
+        data = gnmi_get(node, BGP_PATH, datatype="config")
+        if data is None:
+            return f"Error: could not retrieve BGP config from {node.name} ({node.fqdn})"
+        return format_node_results({node.name: data})
 
     # ------------------------------------------------------------------
     # EVPN — read

@@ -52,7 +52,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 7. **`nos/srl/`** — `SRLBackend` implements only the 5 EVPN methods (MAC-VRF: bridged subinterface + `vxlan0.N` tunnel interface + `mac-vrf` network-instance). Writes are three separate `gnmi_set` calls with a best-effort `_rollback()`. TLS with `skip_verify`.
 
-8. **`nos/eos/`** — `EOSBackend` implements only the 5 EVPN methods (VLAN-based EVPN) using OpenConfig + Arista experimental YANG, no CLI origin. `client.py` connects insecure (no TLS) and exposes `gnmi_get` and `gnmi_set_batch(node, updates, deletes)`, which sends one atomic SetRequest, so provision/delete need no rollback. See "gNMI path conventions (EOS)".
+8. **`nos/eos/`** — `EOSBackend` implements the 5 EVPN methods (VLAN-based EVPN) and the 4 BGP methods using OpenConfig + Arista experimental YANG, no CLI origin. `client.py` connects insecure (no TLS) and exposes `gnmi_get(node, path, datatype="all")` and `gnmi_set_batch(node, updates, deletes)`, which sends one atomic SetRequest, so provision/delete need no rollback. See "gNMI path conventions (EOS)".
 
 9. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`) and `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values). Use these rather than re-implementing reply parsing per backend.
 
@@ -90,6 +90,10 @@ class NodeInfo:
   - Access trunk: `/interfaces/interface[name=EthernetX]/ethernet/switched-vlan/config/trunk-vlans` — empty list means all VLANs allowed, so it is left untouched
 - Instances can be looked up by VLAN name or VLAN id. `evi`/`service_id` are ignored (VLAN id is reported as EVI). The access port must be a trunk switchport (routed uplinks are rejected).
 - EOS reports `redistribute` as `LEARNED, ROUTER_MAC, HOST_ROUTE` even when only `LEARNED` is set.
+- BGP (default VRF): `/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp` (`global`, `neighbors/neighbor[neighbor-address=X]`, `peer-groups`).
+  - `get_bgp_summary` / `get_bgp_neighbors` return a compact per-peer view: peer, peer-as, session state, and prefixes received/sent/installed for **active** AFI-SAFIs only, with names prefix-stripped (e.g. `L2VPN_EVPN`).
+  - `get_bgp_neighbor` returns the raw OpenConfig tree. `get_bgp_config` reads `BGP_PATH` with `datatype="config"`.
+  - EOS does not report `total-paths`/`total-prefixes` in global state, so the summary omits them. Neighbor `peer-as` comes from state, because it's often inherited from the peer group.
 
 ### Write tools and dry_run
 
