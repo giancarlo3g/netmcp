@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-netmcp = "netmcp.server:run"
+netmcp = "netmcp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/netmcp"]

@@ -1,6 +1,12 @@
 {
   "mcpServers": {
     "netmcp": {
+      "type": "http",
+      "url": "http://localhost:8088/mcp"
+    }
+  },
+  "_disabled_local_stdio": {
+    "netmcp": {
       "command": "uv",
       "args": ["run", "netmcp"],
       "env": {

@@ -1,12 +1,26 @@
-# This an example for netmcp.yml file
+# Example netmcp inventory. Copy to netmcp.yml and edit, or generate one from a
+# running containerlab lab with:  netmcp inventory --from-clab [LAB] -o netmcp.yml
+#
+# Per node: name and fqdn (hostname or IP) are required; nos is one of
+# sros | srl | eos | junos | iosxr. Optional: transport (gnmi | netconf),
+# gnmi_port (default per NOS: 57400, eos 6030, junos 32767), netconf_port,
+# username (default admin), tags. Passwords come from environment variables
+# (NETMCP_<NODE>_PASSWORD, NETMCP_DEFAULT_PASSWORD), never from this file.
 
-# inventory:
-  # nodes:
-  # Example node entry:
-  # - name: router1
-  #   fqdn: 192.168.1.1
-  #   nos: sros
-  #   transport: gnmi
-  #   gnmi_port: 57400
-  #   username: admin
-  #   tags: []
+inventory:
+  nodes:
+    - name: dcgw1
+      fqdn: clab-evpn-dcgw1
+      nos: sros
+      tags: [dcgw]
+
+    - name: leaf1
+      fqdn: 172.20.20.11
+      nos: srl
+      tags: [leaf]
+
+    - name: ptx
+      fqdn: mv-ptx
+      nos: junos
+      gnmi_port: 32767
+      tags: [leaf]

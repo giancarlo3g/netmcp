@@ -242,3 +242,5 @@ NetOpsKube
 
 # Other
 PRD.md
+# Local inventory (generate with `netmcp inventory --from-clab`; see netmcp.yml.example)
+netmcp.yml

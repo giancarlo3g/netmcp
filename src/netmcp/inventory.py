@@ -4,9 +4,13 @@ Supports two discovery modes (in priority order):
   1. Static YAML inventory file (netmcp.yml), searched upward from cwd.
   2. Containerlab topology YAML, via NETMCP_CLAB_TOPOLOGY env var or by
      scanning containerlab/*.clab.yml upward from cwd.
+
+`clab_inspect_to_yml()` builds a netmcp.yml from `containerlab inspect` output
+(used by `netmcp inventory --from-clab`).
 """
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -153,7 +157,7 @@ def _find_clab_file() -> Path | None:
         p = Path(explicit)
         if p.exists():
             return p
-        print(f"netmcp: WARNING — NETMCP_CLAB_TOPOLOGY={explicit!r} does not exist, ignoring.")
+        raise FileNotFoundError(f"netmcp: NETMCP_CLAB_TOPOLOGY={explicit!r} does not exist.")
 
     for parent in [Path.cwd()] + list(Path.cwd().parents):
         clab_dir = parent / "containerlab"
@@ -220,17 +224,66 @@ def load_nodes() -> dict[str, NodeInfo]:
         return nodes
 
     raise FileNotFoundError(
-        "netmcp: no inventory found. Create a netmcp.yml file or run from within "
-        "a directory that contains a containerlab/*.clab.yml topology file."
+        f"netmcp: no inventory found from {Path.cwd()}. Create a netmcp.yml "
+        "(see netmcp.yml.example, or run `netmcp inventory --from-clab`), set "
+        "NETMCP_CLAB_TOPOLOGY, or run from a directory that contains a "
+        "containerlab/*.clab.yml topology file. In Docker, mount the inventory "
+        "at /inventory/netmcp.yml."
     )
 
 
+# Logged to stderr: in stdio mode stdout carries the MCP protocol.
 def _log_startup(nodes: dict[str, NodeInfo], source: str) -> None:
     width = max((len(n) for n in nodes), default=4)
-    print(f"netmcp: loaded {len(nodes)} node(s) from {source}", flush=True)
+    print(f"netmcp: loaded {len(nodes)} node(s) from {source}", file=sys.stderr, flush=True)
     for name, info in nodes.items():
-        print(f"  {name:<{width}}  ({info.nos_type})  {info.fqdn}", flush=True)
+        print(f"  {name:<{width}}  ({info.nos_type})  {info.fqdn}", file=sys.stderr, flush=True)
 
 
-# Module-level export — resolved once at import time.
-NODES: dict[str, NodeInfo] = load_nodes()
+# ---------------------------------------------------------------------------
+# netmcp.yml generation from `containerlab inspect --format json`
+# ---------------------------------------------------------------------------
+
+def _clab_short_name(container: str, lab: str) -> str:
+    """Container name → topology node name.
+
+    The container is "<prefix>-<lab>-<node>" ("clab-mv-ceos"), "<lab>-<node>"
+    with `prefix: __lab-name` ("mv-ceos"), or just "<node>" with an empty prefix.
+    """
+    if container.startswith(f"{lab}-"):
+        return container[len(lab) + 1:]
+    marker = f"-{lab}-"
+    if marker in container:
+        return container.split(marker, 1)[1]
+    return container
+
+
+def clab_inspect_to_yml(inspect: dict, lab: str | None = None) -> dict:
+    """Build a netmcp.yml document from `containerlab inspect -a --format json`.
+
+    `inspect` maps lab name → list of containers. `lab` selects one lab; it may
+    be omitted only when a single lab is running. Nodes whose kind has no
+    netmcp NOS (linux clients, …) are skipped. The fqdn is the container name,
+    which Docker's DNS resolves on the lab's management network.
+    """
+    labs = sorted(inspect)
+    if lab is None:
+        if len(labs) != 1:
+            raise ValueError(
+                f"{len(labs)} labs running ({', '.join(labs) or 'none'}); pick one with --from-clab LAB"
+            )
+        lab = labs[0]
+    if lab not in inspect:
+        raise ValueError(f"lab {lab!r} is not running (running: {', '.join(labs) or 'none'})")
+
+    nodes = []
+    for c in inspect[lab]:
+        nos_type = CLAB_KIND_TO_NOS.get(c.get("kind", ""))
+        if nos_type is None:
+            continue
+        node = {"name": _clab_short_name(c["name"], lab), "fqdn": c["name"], "nos": nos_type}
+        if c.get("group"):
+            node["tags"] = [c["group"]]
+        nodes.append(node)
+    nodes.sort(key=lambda n: n["name"])
+    return {"inventory": {"nodes": nodes}}

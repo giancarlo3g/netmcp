@@ -3,14 +3,28 @@ services:
     build: .
     image: netmcp:latest
     container_name: netmcp
+    restart: unless-stopped
+    # Localhost only: the server has write tools and no authentication.
     ports:
-      - "8088:8088"
-    environment:
-      MCP_HOST: "0.0.0.0"
-      MCP_PORT: "8088"
+      - "127.0.0.1:${NETMCP_HTTP_PORT:-8088}:8088"
+    # Passwords (NETMCP_<NODE>_PASSWORD, NETMCP_DEFAULT_PASSWORD); see .env.example.
     env_file:
       - path: .env
         required: false
+    # Generate with: netmcp inventory --from-clab [LAB] -o netmcp.yml
     volumes:
-      - ./netmcp.yml:/app/netmcp.yml:ro
-      - ./containerlab:/app/containerlab:ro
+      - type: bind
+        source: ${NETMCP_INVENTORY:-./netmcp.yml}
+        target: /inventory/netmcp.yml
+        read_only: true
+        bind:
+          create_host_path: false
+    # Join the lab's management network so node names (e.g. mv-sros) resolve
+    # through Docker DNS and the nodes are reachable.
+    networks:
+      - lab
+
+networks:
+  lab:
+    name: ${CLAB_NETWORK:-clab}
+    external: true
