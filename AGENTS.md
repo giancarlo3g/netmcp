@@ -31,7 +31,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
    - `README.md`: optional.
 
    A placeholder NOS has only `__init__.py` (+ `README.md`) with `BACKEND = NotImplementedBackend("<nos>", ...)`. No other files or subdirectories.
-3. **New capability = Protocol + dispatch.** Add the method to `NOSBackend` and `NotImplementedBackend` in `registry.py`, add one unified tool in `dispatch.py`, then implement it in the backends that support it. Vendor-specific arguments become optional unified parameters, as `interface_name`/`vlan_id` did for `provision_evpn_instance`.
+3. **New capability = Protocol + dispatch.** Add the method to `NOSBackend` and `NotImplementedBackend` in `registry.py`, add one unified tool in `dispatch.py`, then implement it in the backends that support it. Vendor-specific arguments become optional unified parameters, as `interface_name`/`vlan_id` did for `provision_evpn_instance`. Then update the support table in `.claude/skills/netmcp-ops/SKILL.md`.
 4. **New NOS = new directory + one `REGISTRY` entry** in `server.py` (plus its containerlab kind in `inventory.CLAB_KIND_TO_NOS`). Nothing else registers anything.
 5. **Shared helpers go in `utils/`** (`formatters.py`, `yang.py`), not copied between NOS directories and not imported across them (e.g. `nos/eos` must not import from `nos/srl`).
 6. **Every implemented backend gets `tests/unit/test_<nos>_backend.py`**, with `gnmi_get`/set mocked using reply shapes captured from a live node.
