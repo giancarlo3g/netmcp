@@ -18,7 +18,8 @@ uv run pytest
 uv run netmcp inventory --from-clab [LAB] -o netmcp.yml
 
 # Docker: HTTP server on 127.0.0.1:8088/mcp, reads ./netmcp.yml and .env, joins the clab network
-docker compose up -d --build
+docker compose pull && docker compose up -d   # published image (ghcr.io/giancarlo3g/netmcp:latest)
+docker compose up -d --build                  # build from the working tree instead
 ```
 
 ## Architecture
@@ -157,6 +158,7 @@ Log only to stderr: in stdio mode stdout is the MCP stream.
 
 - Two-stage `Dockerfile`: uv builds `/app/.venv` (`--no-install-project`, then the project `--no-editable`); the runtime is `python:3.11-slim-bookworm` with only the venv, running `netmcp` as a non-root user.
 - Defaults: `MCP_HOST=0.0.0.0`, `MCP_PORT=8088` (HTTP at `/mcp`), `grpc_proxy=""`. `-e MCP_PORT=` switches to stdio (`docker run -i`).
+- `compose.yaml` uses `image: ${NETMCP_IMAGE:-ghcr.io/giancarlo3g/netmcp:latest}` with `pull_policy: missing` plus `build: .`: `docker compose up` pulls the published image only if none is present locally (`docker compose pull` refreshes it), and `--build` builds the working tree under the same tag. A local build therefore shadows the published image until the next `docker compose pull`.
 - `WORKDIR /inventory`: the inventory is mounted at `/inventory/netmcp.yml`, found by the normal upward search.
 - The container must join the lab's Docker network (`clab`, or `CLAB_NETWORK` in compose) to resolve and reach node container names.
 - `compose.yaml` publishes on `127.0.0.1` only (write tools, no auth) and reads passwords from an optional `.env`.

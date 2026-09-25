@@ -78,11 +78,14 @@ Each node's `fqdn` is its container name (e.g. `mv-sros`), which resolves once n
 
 **3. Passwords (optional).** Nodes use the NOS default password unless `NETMCP_<NODE>_PASSWORD` or `NETMCP_DEFAULT_PASSWORD` is set. With compose, put them in a `.env` file (see `.env.example`).
 
-Start it with compose from a clone of this repo (builds the image, reads `./netmcp.yml` and `.env`, joins `clab`):
+Start it with compose from a clone of this repo. It pulls the published image, reads `./netmcp.yml` and `.env`, and joins `clab`:
 ```bash
-docker compose up -d --build
+docker compose pull          # fetch the latest image (compose only pulls on its own when the image is missing)
+docker compose up -d
 ```
-or pull the published image and run it with plain Docker (drop `--env-file` if you have no `.env`):
+To run your working tree instead, build the image locally with `docker compose up -d --build`. The local build is tagged with the same image name, so a later `docker compose pull` replaces it with the published one.
+
+Or run the published image with plain Docker (drop `--env-file` if you have no `.env`):
 ```bash
 docker run -d --name netmcp --network clab -p 127.0.0.1:8088:8088 \
   -v "$PWD/netmcp.yml:/inventory/netmcp.yml:ro" --env-file .env \
@@ -94,6 +97,7 @@ Compose settings, all optional, in `.env` or the shell:
 
 | Variable | Default | Description |
 |---|---|---|
+| `NETMCP_IMAGE` | `ghcr.io/giancarlo3g/netmcp:latest` | Image to pull or build, e.g. a pinned `:0.1` |
 | `NETMCP_INVENTORY` | `./netmcp.yml` | Inventory file to mount |
 | `CLAB_NETWORK` | `clab` | Lab Docker network (topology `mgmt.network`) |
 | `NETMCP_HTTP_PORT` | `8088` | Host port, bound to `127.0.0.1` |

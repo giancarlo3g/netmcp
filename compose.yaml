@@ -1,7 +1,10 @@
 services:
   netmcp:
+    # Pulls the published image; `docker compose up --build` builds it from
+    # this checkout instead (and tags the local build with the same name).
+    image: ${NETMCP_IMAGE:-ghcr.io/giancarlo3g/netmcp:latest}
+    pull_policy: missing
     build: .
-    image: netmcp:latest
     container_name: netmcp
     restart: unless-stopped
     # Localhost only: the server has write tools and no authentication.
