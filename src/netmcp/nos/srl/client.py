@@ -38,7 +38,7 @@ def _make_gc(node: NodeInfo) -> gNMIclient:
     )
 
 
-def _get_path(gc: gNMIclient, path: str, encoding: str = "json_ietf"):
+def _get_path(gc: gNMIclient, path: str, encoding: str = "json_ietf", datatype: str = "all"):
     """One-shot gNMI GET. Returns the value(s) or None on failure/not-found.
 
     Returns a list when the path resolves to multiple list entries, or a single
@@ -46,7 +46,7 @@ def _get_path(gc: gNMIclient, path: str, encoding: str = "json_ietf"):
     """
     with gc:
         try:
-            result = gc.get(path=[path], encoding=encoding)
+            result = gc.get(path=[path], encoding=encoding, datatype=datatype)
             if result:
                 values = []
                 for notif in result.get("notification", []):
@@ -87,10 +87,13 @@ def _set_path(gc: gNMIclient, path: str, value, operation: str = "update", encod
             return None
 
 
-def gnmi_get(node: NodeInfo, path: str) -> dict | None:
-    """Perform a gNMI GET against the node at the given YANG path."""
+def gnmi_get(node: NodeInfo, path: str, datatype: str = "all") -> dict | None:
+    """Perform a gNMI GET against the node at the given YANG path.
+
+    datatype is "all", "config" or "state".
+    """
     with _suppress_output():
-        return _get_path(_make_gc(node), path)
+        return _get_path(_make_gc(node), path, datatype=datatype)
 
 
 def gnmi_set(node: NodeInfo, path: str, value, operation: str = "update") -> dict | None:

@@ -1,6 +1,9 @@
 """SR Linux implementation of the NOSBackend Protocol.
 
-Implements EVPN (MAC-VRF) read and write operations via gNMI.
+Implements BGP (read) and EVPN (MAC-VRF) read and write operations via gNMI.
+
+BGP uses the native srl_nokia-bgp model of the default network-instance:
+  /network-instance[name=default]/protocols/bgp
 
 SRL EVPN uses a resource-centric model — three gNMI objects per service:
   1. Bridged subinterface on an Ethernet port (VLAN-tagged access)
@@ -18,7 +21,9 @@ from netmcp.inventory import NodeInfo
 from netmcp.nos.srl.client import gnmi_get, gnmi_set
 from netmcp.registry import NotImplementedBackend
 from netmcp.utils.formatters import format_dry_run, format_node_results
-from netmcp.utils.yang import ns_get
+from netmcp.utils.yang import ns_get, strip_prefix
+
+BGP_PATH = "/network-instance[name=default]/protocols/bgp"
 
 _FORBIDDEN_INTERFACES = {"ethernet-1/51", "ethernet-1/52", "system0", "mgmt0"}
 
@@ -49,6 +54,57 @@ class _MacVrfIntent(BaseModel):
         return v
 
 
+def _int(value):
+    """SRL encodes 64-bit counters as strings in json_ietf; return them as int."""
+    return int(value) if isinstance(value, str) and value.isdigit() else value
+
+
+def _bgp_neighbors(data) -> list[dict]:
+    """Return neighbor entries from a reply rooted at bgp, bgp/neighbor or one neighbor."""
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [nbr for item in data for nbr in _bgp_neighbors(item)]
+    data = ns_get(data, "bgp", data)
+    found = ns_get(data, "neighbor")
+    if found is not None:
+        return found if isinstance(found, list) else [found]
+    return [data] if "peer-address" in data else []
+
+
+def _afi_safi_name(name: str) -> str:
+    """Map an SRL AFI-SAFI name to its OpenConfig spelling ("evpn" -> "L2VPN_EVPN")."""
+    name = strip_prefix(name) or ""
+    return "L2VPN_EVPN" if name == "evpn" else name.upper().replace("-", "_")
+
+
+def _active_afi_safis(nbr: dict) -> dict[str, dict]:
+    """Map active (oper-state up) AFI-SAFI name -> {received, sent, installed}."""
+    return {
+        _afi_safi_name(afi.get("afi-safi-name")): {
+            "received": _int(afi.get("received-routes")),
+            "sent": _int(afi.get("sent-routes")),
+            "installed": _int(afi.get("active-routes")),
+        }
+        for afi in ns_get(nbr, "afi-safi") or []
+        if afi.get("oper-state") == "up"
+    }
+
+
+def _peer_summary(nbr: dict) -> dict:
+    """Compact view of one SRL BGP neighbor, shaped like utils.openconfig.peer_summary."""
+    state = nbr.get("session-state")
+    return {
+        "peer": nbr.get("peer-address"),
+        "peer-as": nbr.get("peer-as"),
+        "peer-group": nbr.get("peer-group"),
+        "state": state.upper() if isinstance(state, str) else state,
+        "established-transitions": _int(nbr.get("established-transitions")),
+        "last-established": nbr.get("last-established"),
+        "afi-safis": _active_afi_safis(nbr),
+    }
+
+
 def _vxlan_vnis(node: NodeInfo) -> dict[str, int]:
     """Map vxlan-interface names (e.g. "vxlan0.10") to their ingress VNI."""
     data = gnmi_get(node, "/tunnel-interface")
@@ -77,6 +133,53 @@ class SRLBackend(NotImplementedBackend):
 
     def __init__(self) -> None:
         super().__init__(nos_type="srl", transport="gnmi")
+
+    # ------------------------------------------------------------------
+    # BGP
+    # ------------------------------------------------------------------
+
+    def get_bgp_summary(self, node: NodeInfo) -> str:
+        """Return BGP global state plus a one-line-per-peer summary for the default network-instance."""
+        data = gnmi_get(node, BGP_PATH)
+        if data is None:
+            return f"Error: could not retrieve BGP summary from {node.name} ({node.fqdn})"
+        bgp = ns_get(data, "bgp", data)
+        stats = ns_get(bgp, "statistics") or {}
+        peers = [_peer_summary(n) for n in _bgp_neighbors(bgp)]
+        return format_node_results({node.name: {
+            "as": bgp.get("autonomous-system"),
+            "router-id": bgp.get("router-id"),
+            "total-paths": _int(stats.get("total-paths")),
+            "total-prefixes": _int(stats.get("total-prefixes")),
+            "peers": {
+                "total": len(peers),
+                "established": sum(p["state"] == "ESTABLISHED" for p in peers),
+            },
+            "neighbors": [
+                {k: p[k] for k in ("peer", "peer-as", "state", "afi-safis")} for p in peers
+            ],
+        }})
+
+    def get_bgp_neighbors(self, node: NodeInfo) -> str:
+        """Return a compact view (state, AS, active AFI-SAFI route counts) of every BGP neighbor."""
+        peers = [_peer_summary(n) for n in _bgp_neighbors(gnmi_get(node, f"{BGP_PATH}/neighbor"))]
+        if not peers:
+            return f"No BGP neighbors found on {node.name} ({node.fqdn})"
+        return format_node_results({node.name: peers})
+
+    def get_bgp_neighbor(self, node: NodeInfo, peer_ip: str) -> str:
+        """Return the full native tree (config + state) for one BGP neighbor."""
+        data = gnmi_get(node, f"{BGP_PATH}/neighbor[peer-address={peer_ip}]")
+        if data is None:
+            return f"Error: could not retrieve BGP neighbor {peer_ip!r} from {node.name} ({node.fqdn})"
+        return format_node_results({node.name: data})
+
+    def get_bgp_config(self, node: NodeInfo) -> str:
+        """Return the BGP configuration (global, groups, neighbors) of the default network-instance."""
+        data = gnmi_get(node, BGP_PATH, datatype="config")
+        if data is None:
+            return f"Error: could not retrieve BGP config from {node.name} ({node.fqdn})"
+        return format_node_results({node.name: data})
 
     # ------------------------------------------------------------------
     # EVPN — read

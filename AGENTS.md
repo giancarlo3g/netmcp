@@ -52,7 +52,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 6. **`nos/sros/client.py`** — Thin gNMI transport for SR OS. `gnmi_get(node: NodeInfo, path)` and `gnmi_set(node: NodeInfo, path, value, operation)` are the only public functions. A new `gNMIclient` is created per call because pygnmi consumes the client object on context exit.
 
-7. **`nos/srl/`** — `SRLBackend` implements only the 5 EVPN methods (MAC-VRF: bridged subinterface + `vxlan0.N` tunnel interface + `mac-vrf` network-instance). Writes are three separate `gnmi_set` calls with a best-effort `_rollback()`. TLS with `skip_verify`.
+7. **`nos/srl/`** — `SRLBackend` implements the 5 EVPN methods (MAC-VRF: bridged subinterface + `vxlan0.N` tunnel interface + `mac-vrf` network-instance) and the 4 BGP read methods, native SR Linux YANG. `client.py` exposes `gnmi_get(node, path, datatype="all")` and `gnmi_set(node, path, value, operation)`. Writes are three separate `gnmi_set` calls with a best-effort `_rollback()`. TLS with `skip_verify`. See "gNMI path conventions (SR Linux)".
 
 8. **`nos/eos/`** — `EOSBackend` implements the 5 EVPN methods (VLAN-based EVPN) and the 4 BGP methods using OpenConfig + Arista experimental YANG, no CLI origin. `client.py` connects insecure (no TLS) and exposes `gnmi_get(node, path, datatype="all")` and `gnmi_set_batch(node, updates, deletes)`, which sends one atomic SetRequest, so provision/delete need no rollback. See "gNMI path conventions (EOS)".
 
@@ -83,6 +83,13 @@ class NodeInfo:
 - Config paths: `nokia-conf:configure/...`
 - State paths: `nokia-state:state/...`
 - List keys use unquoted values: `router[router-name=Base]`, `service/vpls[service-name=1]`
+
+### gNMI path conventions (SR Linux)
+
+- Native YANG paths with no origin/prefix; replies are json_ietf with module-prefixed keys (parse with `ns_get`). Config and state share one tree; `datatype="config"` drops the state leaves.
+- BGP (default network-instance): `/network-instance[name=default]/protocols/bgp` (`autonomous-system`, `router-id`, `statistics`, `group[group-name]`, `neighbor[peer-address=X]`). 64-bit counters (`total-paths`, `established-transitions`, …) arrive as strings; they are converted to int.
+  - `get_bgp_summary` / `get_bgp_neighbors` return the same compact per-peer view as EOS and Junos: `session-state` is uppercased (`ESTABLISHED`), only AFI-SAFIs with `oper-state up` are listed, with names mapped to OpenConfig spelling (`evpn` → `L2VPN_EVPN`, `ipv4-unicast` → `IPV4_UNICAST`) and `received-routes`/`sent-routes`/`active-routes` → `received`/`sent`/`installed`. The summary also reports `total-paths`/`total-prefixes` from `statistics`.
+  - `get_bgp_neighbor` returns the raw native neighbor tree. `get_bgp_config` reads `BGP_PATH` with `datatype="config"`.
 
 ### gNMI path conventions (EOS)
 
