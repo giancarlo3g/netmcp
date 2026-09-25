@@ -7,9 +7,9 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that ex
 
 ## Prerequisites
 
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/) package manager
 - A running containerlab topology or a `netmcp.yml` inventory file pointing at reachable nodes
+- Local process: Python 3.11+ and the [`uv`](https://docs.astral.sh/uv/) package manager
+- Docker: Docker with Compose v2. `uv` is only needed to generate `netmcp.yml` with `netmcp inventory --from-clab`
 
 ## Installation
 
@@ -27,7 +27,7 @@ Two options are available depending on whether you want to run the server as a l
 
 The server runs as a child process of the MCP client using stdio transport. This is the simplest setup and requires no extra infrastructure.
 
-`.mcp.json` (already included in the repo):
+The repo's `.mcp.json` uses the HTTP setup from Option 2 by default and keeps the stdio entry under a disabled `_disabled_local_stdio` key (JSON has no comments, and Claude Code only starts servers listed under `mcpServers`). To use the local process, swap the two `netmcp` blocks:
 ```json
 {
   "mcpServers": {
@@ -35,9 +35,14 @@ The server runs as a child process of the MCP client using stdio transport. This
       "command": "uv",
       "args": ["run", "netmcp"]
     }
+  },
+  "_disabled_http": {
+    "netmcp": { "type": "http", "url": "http://localhost:8088/mcp" }
   }
 }
 ```
+
+Then reload the server in Claude Code: run `/mcp`, select **netmcp**, and choose **Reconnect** (or restart Claude Code). Keep the server name `netmcp`, so existing approvals and `mcp__netmcp__*` permissions still apply. To switch back to HTTP, swap the blocks again and reconnect.
 
 To pass credentials, add them under `env` in `.claude/settings.json`:
 ```json
@@ -58,27 +63,70 @@ cd containerlab && containerlab deploy
 claude
 ```
 
-### Option 2 — Docker container (HTTP/SSE)
+### Option 2 — Docker container (HTTP or stdio)
 
-The server runs as a long-lived container and exposes an HTTP endpoint. This is useful when you want a shared server, run multiple clients, or prefer not to install Python locally.
+The image serves MCP over streamable HTTP at `http://<host>:8088/mcp` by default, so any coding agent that supports remote MCP servers can use it. It needs an inventory file and a network path to the routers, plus passwords for nodes that don't use the NOS default.
 
-Build and start the container:
+**1. Inventory.** Mount a `netmcp.yml` at `/inventory/netmcp.yml` (see `netmcp.yml.example`). For a running containerlab lab, generate it on the lab host:
 ```bash
-docker compose up -d --build
+uv run netmcp inventory --from-clab            # the only running lab
+uv run netmcp inventory --from-clab mv -o netmcp.yml
+```
+Each node's `fqdn` is its container name (e.g. `mv-sros`), which resolves once netmcp joins the lab network.
+
+**2. Network.** Attach the container to the lab's Docker network (`clab` unless the topology sets `mgmt.network`). Containerlab node names only resolve through the host's `/etc/hosts`, and Docker blocks traffic between separate bridge networks, so a container on its own network can't reach the lab.
+
+**3. Passwords (optional).** Nodes use the NOS default password unless `NETMCP_<NODE>_PASSWORD` or `NETMCP_DEFAULT_PASSWORD` is set. With compose, put them in a `.env` file (see `.env.example`).
+
+Start it with compose from a clone of this repo. It pulls the published image, reads `./netmcp.yml` and `.env`, and joins `clab`:
+```bash
+docker compose pull          # fetch the latest image (compose only pulls on its own when the image is missing)
+docker compose up -d
+```
+To run your working tree instead, build the image locally with `docker compose up -d --build`. The local build is tagged with the same image name, so a later `docker compose pull` replaces it with the published one.
+
+Or run the published image with plain Docker (drop `--env-file` if you have no `.env`):
+```bash
+docker run -d --name netmcp --network clab -p 127.0.0.1:8088:8088 \
+  -v "$PWD/netmcp.yml:/inventory/netmcp.yml:ro" --env-file .env \
+  ghcr.io/giancarlo3g/netmcp:latest
+```
+Images for linux/amd64 and linux/arm64 are published by `.github/workflows/docker.yml`: `latest` from `main`, and `X.Y.Z` / `X.Y` from `vX.Y.Z` tags. If the pull fails with `denied`, you have stale credentials for ghcr.io; the image is public, so `docker logout ghcr.io` fixes it. (Maintainers: GHCR makes a new package private on its first push; set it to public once under the package's settings on GitHub.)
+
+Compose settings, all optional, in `.env` or the shell:
+
+| Variable | Default | Description |
+|---|---|---|
+| `NETMCP_IMAGE` | `ghcr.io/giancarlo3g/netmcp:latest` | Image to pull or build, e.g. a pinned `:0.1` |
+| `NETMCP_INVENTORY` | `./netmcp.yml` | Inventory file to mount |
+| `CLAB_NETWORK` | `clab` | Lab Docker network (topology `mgmt.network`) |
+| `NETMCP_HTTP_PORT` | `8088` | Host port, bound to `127.0.0.1` |
+
+Check it with `docker compose ps` (the image has a healthcheck) and `docker logs netmcp`, which lists the loaded nodes at startup.
+
+Point your agent at the endpoint. The repo's `.mcp.json` already does this for Claude Code (after `docker compose up -d`, run `/mcp` → **netmcp** → **Reconnect** if Claude Code was started first):
+```bash
+claude mcp add --transport http netmcp http://localhost:8088/mcp   # Claude Code
+```
+```json
+{ "mcpServers": { "netmcp": { "type": "http", "url": "http://localhost:8088/mcp" } } }
 ```
 
-Point `.mcp.json` at the HTTP endpoint:
+For agents that only launch stdio servers, run the image as the command and set `MCP_PORT` empty:
 ```json
 {
   "mcpServers": {
     "netmcp": {
-      "url": "http://localhost:8088/mcp"
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--network", "clab", "-e", "MCP_PORT=",
+               "-v", "/abs/path/netmcp.yml:/inventory/netmcp.yml:ro",
+               "ghcr.io/giancarlo3g/netmcp:latest"]
     }
   }
 }
 ```
 
-Credentials and inventory overrides are set in `compose.yaml` (or a `.env` file) as environment variables — see [Environment Variables](#environment-variables) below.
+The server has write tools and no authentication. Compose publishes the port on `127.0.0.1` only; keep it that way unless the network in front of it is trusted. Behind a corporate proxy, the image already sets `grpc_proxy=""` so gNMI does not go through `https_proxy`.
 
 ---
 
@@ -102,7 +150,7 @@ The server supports two discovery modes (in priority order):
 
 ### 1. Static inventory file (`netmcp.yml`)
 
-Create a `netmcp.yml` in your project root (searched upward from cwd):
+Create a `netmcp.yml` in your project root (searched upward from cwd), starting from `netmcp.yml.example`. It is gitignored. When it exists it takes priority over containerlab discovery, including `NETMCP_CLAB_TOPOLOGY`.
 
 ```yaml
 inventory:
@@ -122,9 +170,11 @@ inventory:
       transport: netconf
 ```
 
+`netmcp inventory --from-clab [LAB] [-o FILE]` writes one from a running containerlab lab (`containerlab inspect`), mapping each kind to its NOS and skipping `linux` nodes.
+
 ### 2. Containerlab auto-discovery
 
-If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upward from cwd and auto-discovers nodes by their containerlab kind. Override the topology file path with `NETMCP_CLAB_TOPOLOGY=/path/to/topo.yml`.
+If no `netmcp.yml` is found, the server scans for `containerlab/*.clab.yml` upward from cwd and auto-discovers nodes by their containerlab kind. Override the topology file path with `NETMCP_CLAB_TOPOLOGY=/path/to/topo.yml`; the server refuses to start if that path doesn't exist.
 
 ### gNMI ports
 
@@ -145,6 +195,8 @@ Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to o
 | `SROS_PASSWORD` | Legacy alias for SR OS nodes |
 | `NETMCP_CLAB_TOPOLOGY` | Explicit path to a containerlab topology file |
 | `NETMCP_NO_INVENTORY` | Set to `1` to start without any inventory (CI/testing) |
+| `MCP_PORT` | Serve streamable HTTP on this port (`/mcp`); unset or empty means stdio. The Docker image sets `8088` |
+| `MCP_HOST` | HTTP bind address (default `127.0.0.1`; the Docker image sets `0.0.0.0`) |
 
 ## Available Tools
 
@@ -258,8 +310,9 @@ Once the lab is running, start the MCP server from the repository root — it wi
 
 ```
 src/netmcp/
-├── server.py          # FastMCP entrypoint — builds REGISTRY, registers all unified tools
-├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery
+├── cli.py             # `netmcp` command — runs the server, or `netmcp inventory --from-clab`
+├── server.py          # FastMCP app — loads the inventory, builds REGISTRY, registers all unified tools
+├── inventory.py       # NodeInfo dataclass, static YAML + containerlab discovery, netmcp.yml generation
 ├── registry.py        # NOSBackend Protocol and NotImplementedBackend
 ├── dispatch.py        # Unified cross-vendor tools — the only place MCP tools are registered
 ├── nos/
@@ -279,6 +332,7 @@ src/netmcp/
 tests/
 └── unit/
     ├── test_dispatch.py     # dispatch routing, error handling, NotImplementedBackend
+    ├── test_inventory.py    # netmcp.yml generation from containerlab inspect, discovery errors
     ├── test_srl_backend.py  # SR Linux EVPN parsing
     ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
     ├── test_junos_backend.py # Junos EVPN parsing, provision, delete; BGP

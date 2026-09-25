@@ -13,11 +13,18 @@ uv run netmcp
 
 # Run unit tests (no lab required)
 uv run pytest
+
+# Generate netmcp.yml from a running containerlab lab
+uv run netmcp inventory --from-clab [LAB] -o netmcp.yml
+
+# Docker: HTTP server on 127.0.0.1:8088/mcp, reads ./netmcp.yml and .env, joins the clab network
+docker compose pull && docker compose up -d   # published image (ghcr.io/giancarlo3g/netmcp:latest)
+docker compose up -d --build                  # build from the working tree instead
 ```
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary) or NETCONF (fallback). The entry point is `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
+This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary) or NETCONF (fallback). The `netmcp` command is `src/netmcp/cli.py`: with no arguments it imports and runs `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
 
 ### Architecture rules (do not change)
 
@@ -40,9 +47,9 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 ### Data flow
 
-1. **`inventory.py`** — At import time, searches upward from cwd for `netmcp.yml` (static inventory) or a `containerlab/*.clab.yml` topology file. Builds `NODES: dict[str, NodeInfo]` mapping short node names (e.g. `"dcgw1"`) to `NodeInfo` objects containing the FQDN, NOS type, transport, and connection details.
+1. **`inventory.py`** — `load_nodes()` searches upward from cwd for `netmcp.yml` (static inventory) or a `containerlab/*.clab.yml` topology file and returns `dict[str, NodeInfo]` mapping short node names (e.g. `"dcgw1"`) to `NodeInfo` objects containing the FQDN, NOS type, transport, and connection details. Importing the module has no side effects. `clab_inspect_to_yml()` builds a netmcp.yml from `containerlab inspect --all --format json` (used by `netmcp inventory --from-clab`).
 
-2. **`server.py`** — Creates the `FastMCP("netmcp")` instance, builds `REGISTRY` (a `dict[str, NOSBackend]` mapping `nos_type` to backend singletons), then calls `dispatch.register_unified_tools(mcp, NODES, REGISTRY)`. There is no separate vendor-tool registration step.
+2. **`server.py`** — Creates the `FastMCP("netmcp")` instance, loads `NODES = load_nodes()` at import, removes pygnmi's stdout log handler (it corrupts stdio mode), builds `REGISTRY` (a `dict[str, NOSBackend]` mapping `nos_type` to backend singletons), then calls `dispatch.register_unified_tools(mcp, NODES, REGISTRY)`. There is no separate vendor-tool registration step.
 
 3. **`dispatch.py`** — Registers 29 unified tools (e.g. `get_interfaces`, `get_bgp_summary`, `provision_evpn_instance`). Each tool calls `_resolve(nodes, registry, node)` to get `(NodeInfo, NOSBackend)`, then delegates to the matching Protocol method. Unknown nodes and unregistered NOS types return `"Error: ..."` strings — never exceptions.
 
@@ -120,7 +127,7 @@ class NodeInfo:
   - Provision requires `interface_name` (`et-0/0/2` → unit = `vlan_id`, or `et-0/0/2.20`) and `vlan_id`. The parent port must already have `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` and is never modified. `export_rt` must equal `import_rt` (single `vrf-target community`). Delete removes the instance and its units.
   - State: one Subscribe on `/network-instances/network-instance[name=X]` (`state`, `vlan`, `jnx-evpn` VTEPs/peers/interfaces, `mac-table-info`, `inter-instance-policies`). Several subscriptions in one request are served sequentially (~2x slower), so subscribe to the common root. `.../evpn` is not a valid path.
   - The spine `ptx-gw` has no routing-instances (Get → NOT_FOUND → "No EVPN instances found").
-- gRPC honours `https_proxy`; `.mcp.json` sets `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
+- gRPC honours `https_proxy`; the Docker image and the local stdio entry in `.mcp.json` set `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
 
 ### Write tools and dry_run
 
@@ -130,9 +137,9 @@ Write tools accept a `dry_run: bool = False` parameter. When `True`, they return
 
 The in-repo topology (`containerlab/nokia-evpn.clab.yml`) models a Nokia DC fabric: `clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`. The topology name drives FQDN construction: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when the topology sets `prefix: __lab-name`.
 
-`.mcp.json` currently points `NETMCP_CLAB_TOPOLOGY` at the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` is the spine/RR and has no EVPN instance.
+The lab in use is the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). The local stdio entry in `.mcp.json` points `NETMCP_CLAB_TOPOLOGY` at it, but a `netmcp.yml` in the repo root takes priority (and is what the Docker container mounts): the local one (gitignored) was generated with `netmcp inventory --from-clab mv` and lists the same nodes. Delete or regenerate it when the lab changes. netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.env` for Docker, or in the local stdio entry of `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` is the spine/RR and has no EVPN instance.
 
-After changing backend code, reconnect the server (`/mcp` → netmcp → Reconnect) before testing through the MCP tools.
+After changing backend code, reload the server before testing through the MCP tools: with the HTTP setup, rebuild the container (`docker compose up -d --build`) and then reconnect (`/mcp` → netmcp → Reconnect); with the local stdio setup, reconnecting is enough.
 
 If a node was unreachable while the server was running (e.g. a cJunos VM still booting after a redeploy), MCP calls to it can keep failing after ~5 s with an empty error even once gNMI is back, while the same backend code run in a fresh process works. Reconnect the server to clear it. cJunos Evolved takes several minutes to boot; wait until its gNMI port answers before querying it.
 
@@ -140,8 +147,24 @@ If a node was unreachable while the server was running (e.g. a cJunos VM still b
 
 Two discovery modes (in priority order):
 
-1. **`netmcp.yml`** — Static YAML inventory listing nodes with their NOS type and connection details. Searched upward from cwd.
-2. **Containerlab auto-discovery** — Scans `containerlab/*.clab.yml` upward from cwd. Override with `NETMCP_CLAB_TOPOLOGY` env var.
+1. **`netmcp.yml`** — Static YAML inventory listing nodes with their NOS type and connection details. Searched upward from cwd. When found (and not empty) it wins over `NETMCP_CLAB_TOPOLOGY`.
+2. **Containerlab auto-discovery** — Scans `containerlab/*.clab.yml` upward from cwd. Override with `NETMCP_CLAB_TOPOLOGY` env var (a missing path is a startup error, not a fallback).
+
+`netmcp.yml` is gitignored; `netmcp.yml.example` is the template. Generate a real one with `netmcp inventory --from-clab`.
+
+Log only to stderr: in stdio mode stdout is the MCP stream.
+
+### Docker
+
+- Two-stage `Dockerfile`: uv builds `/app/.venv` (`--no-install-project`, then the project `--no-editable`); the runtime is `python:3.11-slim-bookworm` with only the venv, running `netmcp` as a non-root user.
+- Defaults: `MCP_HOST=0.0.0.0`, `MCP_PORT=8088` (HTTP at `/mcp`), `grpc_proxy=""`. `-e MCP_PORT=` switches to stdio (`docker run -i`).
+- `compose.yaml` uses `image: ${NETMCP_IMAGE:-ghcr.io/giancarlo3g/netmcp:latest}` with `pull_policy: missing` plus `build: .`: `docker compose up` pulls the published image only if none is present locally (`docker compose pull` refreshes it), and `--build` builds the working tree under the same tag. A local build therefore shadows the published image until the next `docker compose pull`.
+- `WORKDIR /inventory`: the inventory is mounted at `/inventory/netmcp.yml`, found by the normal upward search.
+- The container must join the lab's Docker network (`clab`, or `CLAB_NETWORK` in compose) to resolve and reach node container names.
+- `compose.yaml` publishes on `127.0.0.1` only (write tools, no auth) and reads passwords from an optional `.env`.
+- The compose container is named `netmcp`; check it with `docker logs netmcp` (pygnmi messages go there) and over HTTP with the `mcp` client (`streamablehttp_client("http://127.0.0.1:8088/mcp")`, with `NO_PROXY=127.0.0.1` set so httpx skips the corporate proxy). After changing code, rebuild: `docker compose up -d --build`.
+- `.github/workflows/docker.yml` runs the unit tests and pushes `ghcr.io/giancarlo3g/netmcp` (linux/amd64 + arm64) on `main` (`latest`, `main`) and `v*` tags (`X.Y.Z`, `X.Y`); pull requests only build.
+- This host has stale `ghcr.io` credentials in `~/.docker/config.json`, so pulling the uv base image fails with `denied`. Build with an empty `DOCKER_CONFIG`, or run `docker logout ghcr.io`.
 
 ### Credentials
 
@@ -153,4 +176,20 @@ Per-node credential resolution order:
 
 ### Claude Code integration
 
-`.mcp.json` registers the server automatically. To override credentials, add env vars to `.claude/settings.json` under `mcpServers.netmcp.env`.
+`.mcp.json` registers the server as `netmcp` (approved in `.claude/settings.local.json` via `enabledMcpjsonServers`). It currently uses the **HTTP** setup: Claude Code connects to the compose container at `http://localhost:8088/mcp`.
+
+```json
+{
+  "mcpServers": {
+    "netmcp": { "type": "http", "url": "http://localhost:8088/mcp" }
+  },
+  "_disabled_local_stdio": {
+    "netmcp": { "command": "uv", "args": ["run", "netmcp"], "env": { ... } }
+  }
+}
+```
+
+- **HTTP (current)**: start the server with `docker compose up -d --build`. The container reads `./netmcp.yml` (mounted at `/inventory/netmcp.yml`) and passwords from `.env`, and joins the `clab` network. `NO_PROXY` must include `localhost` so Claude Code does not send the request through the corporate proxy.
+- **Local stdio (disabled)**: JSON has no comments, so the stdio entry is kept under the top-level `_disabled_local_stdio` key, which Claude Code ignores. It runs `uv run netmcp` from the working tree with `NETMCP_CLAB_TOPOLOGY`, the PTX passwords and `grpc_proxy=""` in its `env`. To switch to it, swap the two `netmcp` blocks: move the stdio entry under `mcpServers` and the HTTP entry under a disabled key (e.g. `_disabled_http`), then run `/mcp` → netmcp → Reconnect (or restart Claude Code). Keep the server name `netmcp` so the approval and `mcp__netmcp__*` permissions still apply. The container can keep running; stdio does not use port 8088.
+
+Only keys under `mcpServers` are started. To override credentials for the stdio entry, add env vars to its `env` (or to `.claude/settings.json` under `mcpServers.netmcp.env`); for HTTP, put them in `.env` and recreate the container.
