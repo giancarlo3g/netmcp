@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(ssh *)",
+      "Bash(sshpass *)",
+      "Bash(telnet *)",
+      "Bash(docker exec *)",
+      "Bash(containerlab exec *)",
+      "Bash(clab exec *)",
+      "Bash(gnmic *)",
+      "Bash(gnmi_cli *)",
+      "Bash(netconf-console *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(uv add *)",
+      "Bash(uv pip *)",
+      "Bash(apt *)",
+      "Bash(apt-get *)",
+      "Bash(npm install *)"
+    ]
+  }
+}

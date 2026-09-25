@@ -235,7 +235,9 @@ NetOpsKube
 
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 # CLAUDE.md
 
 # Other

@@ -86,6 +86,16 @@ Prompt examples (either option):
 - Check interfaces in all SROS routers
 - Provide BGP status of all neighbors by router
 
+### Operator mode (Claude Code)
+
+The project skill `.claude/skills/netmcp-ops/SKILL.md` teaches the agent how to use the netmcp tools safely: which tools each NOS supports, how to fan out across nodes, and a dry-run → confirm → apply → verify flow for every change. It also tells the agent to reach devices only through netmcp and to leave the code alone. `.claude/settings.json` enforces the device-access part by denying `ssh`, `docker exec`, `containerlab exec`, `gnmic` and package installs.
+
+Code edits can't be denied project-wide without blocking development. For a session that can only talk to routers through netmcp, start Claude Code with the file and shell tools removed:
+
+```bash
+claude --disallowedTools "Edit,Write,NotebookEdit,Bash"
+```
+
 ## Node Inventory
 
 The server supports two discovery modes (in priority order):
