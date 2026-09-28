@@ -126,7 +126,7 @@ class NodeInfo:
   - Lookup by instance name, VLAN name or VLAN id; the VLAN id is reported as the EVI; `evi`/`service_id` are ignored.
   - Provision requires `interface_name` (`et-0/0/2` → unit = `vlan_id`, or `et-0/0/2.20`) and `vlan_id`. The parent port must already have `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` and is never modified. `export_rt` must equal `import_rt` (single `vrf-target community`). Delete removes the instance and its units.
   - State: one Subscribe on `/network-instances/network-instance[name=X]` (`state`, `vlan`, `jnx-evpn` VTEPs/peers/interfaces, `mac-table-info`, `inter-instance-policies`). Several subscriptions in one request are served sequentially (~2x slower), so subscribe to the common root. `.../evpn` is not a valid path.
-  - The spine `ptx-gw` has no routing-instances (Get → NOT_FOUND → "No EVPN instances found").
+  - A node with no routing-instances (e.g. a spine/RR) returns NOT_FOUND on Get → "No EVPN instances found".
 - gRPC honours `https_proxy`; the Docker image and the local stdio entry in `.mcp.json` set `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
 
 ### Write tools and dry_run
@@ -135,9 +135,20 @@ Write tools accept a `dry_run: bool = False` parameter. When `True`, they return
 
 ### Lab topology
 
-The in-repo topology (`containerlab/nokia-evpn.clab.yml`) models a Nokia DC fabric: `clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`. The topology name drives FQDN construction: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when the topology sets `prefix: __lab-name`.
+netmcp is not tied to a particular lab. It works against whatever the inventory lists: any running containerlab lab, or any hand-written `netmcp.yml` (which can point at non-containerlab devices too). Nodes whose containerlab kind is not in `CLAB_KIND_TO_NOS` (linux clients, …) are skipped. Do not assume node names, lab names or service baselines; call `list_nodes` (or read the inventory) to find out what the current lab contains.
 
-The lab in use is the multivendor lab (`/home/zaman/multivendor/multivendor.clab.yml`, lab `mv`). The local stdio entry in `.mcp.json` points `NETMCP_CLAB_TOPOLOGY` at it, but a `netmcp.yml` in the repo root takes priority (and is what the Docker container mounts): the local one (gitignored) was generated with `netmcp inventory --from-clab mv` and lists the same nodes. Delete or regenerate it when the lab changes. netmcp discovers `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (set via `NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD` in `.env` for Docker, or in the local stdio entry of `.mcp.json`); other kinds are skipped. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` is the spine/RR and has no EVPN instance.
+To point netmcp at a lab:
+
+1. Generate the inventory on the lab host: `uv run netmcp inventory --from-clab [LAB] -o netmcp.yml` (`LAB` may be omitted when only one lab is running). The fqdn is the container name, so it works with any containerlab `prefix`. Regenerate (or delete) `netmcp.yml` whenever the lab changes; a stale one wins over everything else.
+2. Set passwords for nodes that don't use their NOS default: `NETMCP_<NODE>_PASSWORD` or `NETMCP_DEFAULT_PASSWORD` in `.env` (Docker) or in the stdio entry's `env` (see Credentials).
+3. Docker: set `CLAB_NETWORK` if the lab uses a management network other than containerlab's default `clab` (`mgmt.network` in the topology), then `docker compose up -d`.
+4. Reconnect the MCP server (`/mcp` → netmcp → Reconnect).
+
+Without a `netmcp.yml`, the local stdio setup can instead read a topology file directly (`NETMCP_CLAB_TOPOLOGY=/path/to/lab.clab.yml`, or a `containerlab/*.clab.yml` found upward from cwd). The FQDN is then derived from the topology: `clab-{topo_name}-{node_name}`, or `{topo_name}-{node_name}` when it sets `prefix: __lab-name`. The in-repo `containerlab/nokia-evpn.clab.yml` is a sample Nokia DC fabric (`clients → leaves (SR Linux) → spines (SR Linux) → DCGWs (SR OS)`).
+
+#### Example: multivendor lab `mv`
+
+The lab used during development is `~/multivendor/multivendor.clab.yml` (lab `mv`). These facts apply only when that lab is loaded. Nodes: `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (`NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD`). EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` has no routing-instances, so "No EVPN instances found" is expected there.
 
 After changing backend code, reload the server before testing through the MCP tools: with the HTTP setup, rebuild the container (`docker compose up -d --build`) and then reconnect (`/mcp` → netmcp → Reconnect); with the local stdio setup, reconnecting is enough.
 
@@ -189,7 +200,7 @@ Per-node credential resolution order:
 }
 ```
 
-- **HTTP (current)**: start the server with `docker compose up -d --build`. The container reads `./netmcp.yml` (mounted at `/inventory/netmcp.yml`) and passwords from `.env`, and joins the `clab` network. `NO_PROXY` must include `localhost` so Claude Code does not send the request through the corporate proxy.
-- **Local stdio (disabled)**: JSON has no comments, so the stdio entry is kept under the top-level `_disabled_local_stdio` key, which Claude Code ignores. It runs `uv run netmcp` from the working tree with `NETMCP_CLAB_TOPOLOGY`, the PTX passwords and `grpc_proxy=""` in its `env`. To switch to it, swap the two `netmcp` blocks: move the stdio entry under `mcpServers` and the HTTP entry under a disabled key (e.g. `_disabled_http`), then run `/mcp` → netmcp → Reconnect (or restart Claude Code). Keep the server name `netmcp` so the approval and `mcp__netmcp__*` permissions still apply. The container can keep running; stdio does not use port 8088.
+- **HTTP (current)**: start the server with `docker compose up -d --build`. The container reads `./netmcp.yml` (mounted at `/inventory/netmcp.yml`) and passwords from `.env`, and joins the lab's management network (`CLAB_NETWORK`, default `clab`). `NO_PROXY` must include `localhost` so Claude Code does not send the request through the corporate proxy.
+- **Local stdio (disabled)**: JSON has no comments, so the stdio entry is kept under the top-level `_disabled_local_stdio` key, which Claude Code ignores. It runs `uv run netmcp` from the working tree with `NETMCP_CLAB_TOPOLOGY` (the lab's topology file), per-node passwords and `grpc_proxy=""` in its `env`. To switch to it, swap the two `netmcp` blocks: move the stdio entry under `mcpServers` and the HTTP entry under a disabled key (e.g. `_disabled_http`), then run `/mcp` → netmcp → Reconnect (or restart Claude Code). Keep the server name `netmcp` so the approval and `mcp__netmcp__*` permissions still apply. The container can keep running; stdio does not use port 8088.
 
 Only keys under `mcpServers` are started. To override credentials for the stdio entry, add env vars to its `env` (or to `.claude/settings.json` under `mcpServers.netmcp.env`); for HTTP, put them in `.env` and recreate the container.
