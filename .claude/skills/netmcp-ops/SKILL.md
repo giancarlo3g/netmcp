@@ -1,6 +1,6 @@
 ---
 name: netmcp-ops
-description: Operate and troubleshoot network routers (Nokia SR OS, SR Linux, Arista EOS, Juniper Junos) through the netmcp MCP tools. Use whenever the user asks about routers, nodes, the lab, interfaces, ports, BGP peers/sessions, EVPN/VXLAN instances, VLANs, VNIs, route-targets, or wants to provision/delete a service or change an interface description — including requests that name a node (e.g. sros, srl, ceos, ptx, ptx-gw, dcgw1) or say "all routers".
+description: Operate and troubleshoot network routers (Nokia SR OS, SR Linux, Arista EOS, Juniper Junos, Cisco NX-OS) through the netmcp MCP tools. Use whenever the user asks about routers, nodes, the lab, interfaces, ports, BGP peers/sessions, EVPN/VXLAN instances, VLANs, VNIs, route-targets, or wants to provision/delete a service or change an interface description — including requests that name a node (e.g. sros, srl, ceos, ptx, ptx-gw, nexus, dcgw1) or say "all routers".
 ---
 
 # Operating routers with netmcp
@@ -26,13 +26,13 @@ Call `list_nodes` first. It gives each node's short name and NOS type. Always pa
 
 ## What each NOS supports
 
-| Tools | sros | srl | eos | junos | iosxr |
-|---|---|---|---|---|---|
-| `get_system_info`, `get_system_alarms` | ✓ | – | – | – | – |
-| `get_ports`, `get_interfaces`, `get_interface_state`, `set_interface_description` | ✓ | – | – | – | – |
-| `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor`, `get_bgp_config` | ✓ | ✓ | ✓ | ✓ | – |
-| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | – |
-| IS-IS, OSPF, MPLS, SR, VRF, log tools | – | – | – | – | – |
+| Tools | sros | srl | eos | junos | nxos | iosxr |
+|---|---|---|---|---|---|---|
+| `get_system_info`, `get_system_alarms` | ✓ | – | – | – | – | – |
+| `get_ports`, `get_interfaces`, `get_interface_state`, `set_interface_description` | ✓ | – | – | – | – | – |
+| `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor`, `get_bgp_config` | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | – | – |
+| IS-IS, OSPF, MPLS, SR, VRF, log tools | – | – | – | – | – | – |
 
 `–` returns a "not implemented" error string: that means *unsupported*, not *broken*. Don't retry it, and don't call it on purpose — skip that node and say so.
 
@@ -81,11 +81,12 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 ## Known quirks (not bugs)
 
 - EOS reports `redistribute` as `LEARNED, ROUTER_MAC, HOST_ROUTE` even when only `LEARNED` was set.
-- The EOS BGP summary has no `total-paths`/`total-prefixes`. SR OS, SR Linux and Junos report them.
+- The EOS and NX-OS BGP summaries have no `total-paths`/`total-prefixes`. SR OS, SR Linux and Junos report them.
+- NX-OS (reached over NETCONF) reports per-AFI `received`/`sent` only, with no `installed`. `get_bgp_neighbor`/`get_bgp_config` return the native `Cisco-NX-OS-device` tree (`Peer-list`, `PeerEntry-list`, `peerImp` = template).
 - `ptx-gw` is the spine/route reflector: "No EVPN instances found" there is expected.
 - Junos (cJunos Evolved) takes several minutes to boot. If calls to it fail after ~5 s with an empty error once it's up, ask the user to reconnect the server (`/mcp` → netmcp → Reconnect). Don't try to diagnose it yourself.
 - An unknown node name returns an `Error:` string. Re-check `list_nodes`.
 
 ## Lab baseline (multivendor lab `mv` only)
 
-EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. Use this as the expected state when checking the lab; it doesn't apply to other inventories.
+EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. `nexus` (NX-OS) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 through template `iBGP-evpn`. Use this as the expected state when checking the lab; it doesn't apply to other inventories.

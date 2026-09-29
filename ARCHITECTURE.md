@@ -3,6 +3,7 @@
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes network routers from multiple vendors to LLM agents. It allows an AI assistant (such as Claude) to query and configure routers directly — reading BGP state, managing interfaces, provisioning EVPN services, and more — without knowing vendor-specific CLI syntax.
 
 **Currently implemented (via gNMI):** Nokia SR OS (system, interfaces, BGP, EVPN), Nokia SR Linux (EVPN), Arista EOS (EVPN, BGP), Juniper Junos Evolved (EVPN, BGP)
+**Currently implemented (via NETCONF):** Cisco NX-OS (BGP)
 **Placeholder support:** Cisco IOS-XR
 
 ## Prerequisites
@@ -185,6 +186,7 @@ Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to o
 | SR OS, SR Linux | 57400 | |
 | Arista EOS | 6030 | |
 | Juniper Junos | 32767 | Enable with `set system services extension-service request-response grpc clear-text port 32767`. Don't use 57400: it is in the Linux ephemeral range (32768–60999), and Junos Evolved's internal `trace-relay` can take it as a source port at boot, leaving gNMI refusing connections. |
+| Cisco NX-OS | – | Not used: NX-OS is reached over NETCONF on port 830 (`netconf_port`, `feature netconf`). Its gNMI is TLS-only, and the auto-generated day-1 certificate expires after 24 hours. |
 
 ### Environment Variables
 
@@ -323,6 +325,7 @@ src/netmcp/
 │   ├── srl/           # Nokia SR Linux — EVPN (MAC-VRF); same three files
 │   ├── eos/           # Arista EOS — EVPN (VLAN-based), BGP; same three files
 │   ├── junos/         # Juniper Junos Evolved — EVPN (mac-vrf), BGP; same three files
+│   ├── nxos/          # Cisco NX-OS — BGP over NETCONF (Cisco-NX-OS-device YANG); same three files
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     ├── formatters.py  # Output formatting helpers
@@ -336,6 +339,7 @@ tests/
     ├── test_srl_backend.py  # SR Linux EVPN parsing
     ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
     ├── test_junos_backend.py # Junos EVPN parsing, provision, delete; BGP
+    ├── test_nxos_backend.py  # NX-OS BGP parsing, NETCONF reply decoding
     └── test_structure.py    # enforces the layout below
 ```
 
