@@ -7,6 +7,8 @@ NX-OS conventions:
     (namespace http://cisco.com/ns/yang/cisco-nx-os-device) with subtree filters.
   - Replies are decoded into nested dicts: namespaces are stripped, `*-list`
     elements always become lists, leaves are strings.
+  - Writes are one <edit-config> on the running datastore with
+    error-option rollback-on-error, so a rejected payload applies nothing.
 """
 
 from xml.etree import ElementTree as ET
@@ -80,3 +82,22 @@ def netconf_get_config(node: NodeInfo, filter_xml: str) -> dict | None:
     except Exception as e:
         raise RuntimeError(f"NETCONF get-config failed on {node.fqdn}: {e}") from e
     return _decode(reply.data_xml)
+
+
+def netconf_edit_config(node: NodeInfo, config_xml: str) -> None:
+    """NETCONF <edit-config> (merge) of the running datastore, all-or-nothing.
+
+    config_xml is the <System> subtree; delete operations are carried inline as
+    nc:operation attributes.
+    """
+    config = f'<config xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">{config_xml}</config>'
+    try:
+        with _connect(node) as m:
+            m.edit_config(
+                target="running",
+                config=config,
+                default_operation="merge",
+                error_option="rollback-on-error",
+            )
+    except Exception as e:
+        raise RuntimeError(f"NETCONF edit-config failed on {node.fqdn}: {e}") from e
