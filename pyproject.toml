@@ -12,6 +12,7 @@ dependencies = [
     "pygnmi>=0.8.12",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    "ncclient>=0.7.1",
 ]
 
 [project.scripts]

@@ -24,7 +24,7 @@ docker compose up -d --build                  # build from the working tree inst
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary) or NETCONF (fallback). The `netmcp` command is `src/netmcp/cli.py`: with no arguments it imports and runs `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
+This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary) or NETCONF (fallback, used for NX-OS). The `netmcp` command is `src/netmcp/cli.py`: with no arguments it imports and runs `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
 
 ### Architecture rules (do not change)
 
@@ -53,7 +53,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 3. **`dispatch.py`** — Registers 29 unified tools (e.g. `get_interfaces`, `get_bgp_summary`, `provision_evpn_instance`). Each tool calls `_resolve(nodes, registry, node)` to get `(NodeInfo, NOSBackend)`, then delegates to the matching Protocol method. Unknown nodes and unregistered NOS types return `"Error: ..."` strings — never exceptions.
 
-4. **NOS modules** (`nos/sros/`, `nos/srl/`, `nos/eos/`, `nos/junos/`, `nos/iosxr/`) — Each exports `NOS_TYPE` and `BACKEND` (a singleton implementing `NOSBackend`). There are no vendor-specific tool registrations; all tools go through `dispatch.py`.
+4. **NOS modules** (`nos/sros/`, `nos/srl/`, `nos/eos/`, `nos/junos/`, `nos/nxos/`, `nos/iosxr/`) — Each exports `NOS_TYPE` and `BACKEND` (a singleton implementing `NOSBackend`). There are no vendor-specific tool registrations; all tools go through `dispatch.py`.
 
 5. **`nos/sros/backend.py`** — `SROSBackend(NotImplementedBackend)` implements the `NOSBackend` Protocol for system, interfaces, BGP, and EVPN (read and write). Domains not yet implemented (IGP, MPLS/SR, VRF, Logging) fall through to `NotImplementedBackend` and return error strings.
 
@@ -65,9 +65,11 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 9. **`nos/junos/`** — `JunOSBackend` implements the 4 BGP methods and the 5 EVPN methods (vlan-based EVPN-VXLAN `mac-vrf`), YANG only (no `cli:` origin). State comes from OpenConfig over Subscribe ONCE; config is read and written as native Junos YANG under the `juniper` origin. `client.py` exposes `gnmi_subscribe_once(node, path)` (nested dict rooted at `path`, or `None`), `gnmi_get_config(node, paths)` and `gnmi_set_batch(node, updates, deletes)` (one SetRequest = one commit, so no rollback). See "gNMI path conventions (Junos)".
 
-10. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
+10. **`nos/nxos/`** — `NXOSBackend` implements the 4 BGP read methods and the 5 EVPN methods (VLAN-based EVPN-VXLAN) over **NETCONF** (ncclient) with the native `Cisco-NX-OS-device` YANG model. `client.py` exposes `netconf_get(node, filter_xml)` and `netconf_get_config(node, filter_xml)` (subtree filters), both returning the `<data>` reply decoded to a nested dict (namespaces stripped, `*-list` elements always lists, leaves as strings) or `None`, and `netconf_edit_config(node, config_xml)` (one `<edit-config>` on running, merge, `rollback-on-error`, so no rollback helper). See "NETCONF path conventions (NX-OS)".
 
-11. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
+11. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
+
+12. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
 
 ### NodeInfo
 
@@ -78,8 +80,9 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 class NodeInfo:
     name: str        # short name: "dcgw1"
     fqdn: str        # hostname: "clab-evpn-dcgw1"
-    nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr"
+    nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos"
     transport: str   # "gnmi" | "netconf"
+    netconf_port: int  # default 830
     gnmi_port: int   # default 57400 (6030 for eos, 32767 for junos, via _NOS_GNMI_PORT_DEFAULTS)
     username: str    # default "admin"
     tags: list[str]
@@ -129,9 +132,22 @@ class NodeInfo:
   - A node with no routing-instances (e.g. a spine/RR) returns NOT_FOUND on Get → "No EVPN instances found".
 - gRPC honours `https_proxy`; the Docker image and the local stdio entry in `.mcp.json` set `grpc_proxy=""` so lab traffic bypasses the corporate proxy. Scripts run outside the MCP server need the same.
 
+### NETCONF path conventions (NX-OS)
+
+- NETCONF over SSH, port 830 (`feature netconf`), default login admin/admin, `device_params={"name": "nexus"}`. gNMI (50051) is not used: it is TLS-only and, with no certificate configured, NX-OS serves an auto-generated day-1 cert that expires after 24 h (handshake then fails with `certificate has expired`, even with skip_verify).
+- Model: `Cisco-NX-OS-device`, namespace `http://cisco.com/ns/yang/cisco-nx-os-device`, root `<System>`. Reads use `<get>` (config + oper) or `<get-config source=running>` with subtree filters; writes use one `<edit-config>` on `running` (merge, `rollback-on-error`, deletes as inline `nc:operation="delete"`); never `<exec>`/`<command>` RPCs.
+- BGP: `System/bgp-items/inst-items` (`asn`) → `dom-items/Dom-list[name=default]` (`rtrId`) → `peer-items/Peer-list[addr=X]` (`peerImp` = inherited template) → `ent-items/PeerEntry-list` (`operSt`, `operAsn`, `connEst`, `lastFlapTs`) → `af-items/PeerAfEntry-list[type=l2vpn-evpn]` (`tblSt`, `acceptedPaths`, `pfxSent`). Templates: `Dom-list/peercont-items/PeerCont-list[name=T]`.
+  - A filter scoped to one `Dom-list` drops `inst-items` leaves, so it also selects `<asn/>`. There is an internal `Dom-list` named `egress-loadbalance-resolution-`; always filter on `name=default`.
+  - `get_bgp_summary` / `get_bgp_neighbors` return the same compact view as the other NOSes: `operSt` uppercased, only AFIs with `tblSt up`, `l2vpn-evpn` → `L2VPN_EVPN`, `received` = `acceptedPaths`, `sent` = `pfxSent`. There is no per-peer installed count and no `total-paths`/`total-prefixes`.
+  - `get_bgp_neighbor` returns the raw `Peer-list` entry; a filter for an unknown peer returns only the `Dom-list` key skeleton (→ not found). `get_bgp_config` returns `inst-items` from running config.
+- EVPN instance = VLAN `bd-items/bd-items/BD-list[fabEncap=vlan-N]` (`name`, `accEncap=vxlan-VNI`) + NVE member `eps-items/epId-items/Ep-list[epId=1]/nws-items/vni-items/Nw-list[vni]` (`IngRepl-items/proto bgp`) + `evpn-items/bdevi-items/BDEvi-list[encap=vxlan-VNI]` (`rd`, `rttp-items/RttP-list[type]/ent-items/RttEntry-list[rtt]`) + access trunk `intf-items/phys-items/PhysIf-list[id=eth1/1]` (`mode`, `layer`, `trunkVlans` string like `10,20-30`).
+  - RD/RT values are typed: `rd:as2-nn2:10:6`, `route-target:as2-nn2:65000:10` (`as2-nn4`/`as4-nn2`/`ipv4-nn2` by size; `rd:unknown:0:0` = auto); the backend shows and accepts `10:6`/`65000:10`.
+  - Lookup by VLAN name or id; VLAN id is reported as the EVI; `evi`/`service_id` are ignored. Provision needs `interface_name` (a Layer2 trunk, `Ethernet1/1`) and `vlan_id` (2-3967), and an existing `nve1`. Delete leaves the default `1-4094` trunk list and single-VLAN lists alone.
+  - State: `BD-list` `operSt`, `Ep-list` `operState`/`opervni-items/OperNw-list`, VTEPs in `peers-items/dy_peer-items/DyPeer-list` (all NVE peers), MACs in `mac-items/table-items/vlan-items/MacAddressEntry-list` (both keys required in a filter, so the whole table is read; remote MACs have `port` `Nve`).
+
 ### Write tools and dry_run
 
-Write tools accept a `dry_run: bool = False` parameter. When `True`, they return the formatted gNMI payload via `format_dry_run()` without calling `gnmi_set()`. Write tools that take structured inputs (e.g. `provision_evpn_instance`) validate parameters with a Pydantic model (e.g. `_VplsIntent` in `backend.py`) before any network call.
+Write tools accept a `dry_run: bool = False` parameter. When `True`, they return the formatted gNMI payload via `format_dry_run()` without calling `gnmi_set()` (NX-OS returns the `<edit-config>` XML instead, without calling `netconf_edit_config()`). Write tools that take structured inputs (e.g. `provision_evpn_instance`) validate parameters with a Pydantic model (e.g. `_VplsIntent` in `backend.py`) before any network call.
 
 ### Lab topology
 
@@ -148,7 +164,7 @@ Without a `netmcp.yml`, the local stdio setup can instead read a topology file d
 
 #### Example: multivendor lab `mv`
 
-The lab used during development is `~/multivendor/multivendor.clab.yml` (lab `mv`). These facts apply only when that lab is loaded. Nodes: `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (`NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD`). EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` has no routing-instances, so "No EVPN instances found" is expected there.
+The lab used during development is `~/multivendor/multivendor.clab.yml` (lab `mv`). These facts apply only when that lab is loaded. Nodes: `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (`NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD`), and `nexus` (mv-nexus, Cisco N9Kv 10.6.3F, nxos, NETCONF 830, admin/admin; iBGP AS 65000 EVPN peers 192.1.2.1/192.1.2.2 via template `iBGP-evpn`; EVPN VLAN 10 `mac-vrf-10`, VNI 1010, RD 10:6, trunk `eth1/1`). EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` has no routing-instances, so "No EVPN instances found" is expected there.
 
 After changing backend code, reload the server before testing through the MCP tools: with the HTTP setup, rebuild the container (`docker compose up -d --build`) and then reconnect (`/mcp` → netmcp → Reconnect); with the local stdio setup, reconnecting is enough.
 

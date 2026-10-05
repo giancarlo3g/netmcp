@@ -29,6 +29,7 @@ CLAB_KIND_TO_NOS: dict[str, str] = {
     "juniper_vjunosevolved": "junos",
     "juniper_cjunosevolved": "junos",
     "cisco_xrd": "iosxr",
+    "cisco_n9kv": "nxos",
 }
 
 # Per-NOS transport defaults
@@ -38,6 +39,7 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "eos": "gnmi",
     "junos": "gnmi",
     "iosxr": "netconf",
+    "nxos": "netconf",
 }
 
 # Per-NOS gNMI port defaults (the rest use GNMI_PORT). Junos uses 32767 because
@@ -54,7 +56,7 @@ class NodeInfo:
 
     name: str           # short name used in tool calls, e.g. "dcgw1"
     fqdn: str           # hostname or IP the server connects to
-    nos_type: str       # "sros" | "srl" | "eos" | "junos" | "iosxr"
+    nos_type: str       # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos"
     transport: str = "gnmi"
     gnmi_port: int = GNMI_PORT
     netconf_port: int = 830
@@ -94,6 +96,7 @@ def resolve_password(node: NodeInfo) -> str:
         "eos": "admin",
         "junos": "admin",
         "iosxr": "admin",
+        "nxos": "admin",
     }
     return nos_defaults.get(node.nos_type, "admin")
 

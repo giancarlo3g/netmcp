@@ -3,6 +3,7 @@
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes network routers from multiple vendors to LLM agents. It allows an AI assistant (such as Claude) to query and configure routers directly — reading BGP state, managing interfaces, provisioning EVPN services, and more — without knowing vendor-specific CLI syntax.
 
 **Currently implemented (via gNMI):** Nokia SR OS (system, interfaces, BGP, EVPN), Nokia SR Linux (EVPN), Arista EOS (EVPN, BGP), Juniper Junos Evolved (EVPN, BGP)
+**Currently implemented (via NETCONF):** Cisco NX-OS (BGP, EVPN)
 **Placeholder support:** Cisco IOS-XR
 
 ## Prerequisites
@@ -185,6 +186,7 @@ Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to o
 | SR OS, SR Linux | 57400 | |
 | Arista EOS | 6030 | |
 | Juniper Junos | 32767 | Enable with `set system services extension-service request-response grpc clear-text port 32767`. Don't use 57400: it is in the Linux ephemeral range (32768–60999), and Junos Evolved's internal `trace-relay` can take it as a source port at boot, leaving gNMI refusing connections. |
+| Cisco NX-OS | – | Not used: NX-OS is reached over NETCONF on port 830 (`netconf_port`, `feature netconf`). Its gNMI is TLS-only, and the auto-generated day-1 certificate expires after 24 hours. |
 
 ### Environment Variables
 
@@ -242,8 +244,11 @@ How each NOS models an EVPN instance, and what `provision_evpn_instance` needs:
 | SR Linux | `mac-vrf` + bridged subinterface + `vxlan0.N` tunnel interface | `interface_name` (e.g. `ethernet-1/3`), `vlan_id` | |
 | EOS | VLAN + Vxlan1 VLAN-to-VNI + `router bgp / vlan N` | `interface_name` (trunk port, e.g. `Ethernet1`), `vlan_id` | VLAN id is reported as the EVI; `evi`/`service_id` ignored |
 | Junos | vlan-based `mac-vrf` routing-instance (VXLAN, VTEP source `lo0.0`) + `vlan-bridge` access unit | `interface_name` (`et-0/0/2`, unit = `vlan_id`, or `et-0/0/2.20`), `vlan_id` | `export_rt` must equal `import_rt` (one `vrf-target`); the parent port needs `flexible-vlan-tagging` + `encapsulation flexible-ethernet-services` already; VLAN id is reported as the EVI |
+| NX-OS | VLAN with `vn-segment` + `nve1` member VNI (ingress-replication bgp) + `evpn / vni N l2` (RD, import/export RT) | `interface_name` (Layer2 trunk port, e.g. `Ethernet1/1`), `vlan_id` (2-3967) | `nve1` must already exist; the VLAN is added to the trunk allowed list; RD may be `auto`; VLAN id is reported as the EVI; `evi`/`service_id` ignored |
 
-On EOS and Junos, provision and delete are a single atomic gNMI Set: if the device rejects any part, nothing is applied.
+On EOS and Junos, provision and delete are a single atomic gNMI Set; on NX-OS they are a single NETCONF `<edit-config>` with `rollback-on-error`. Either way, if the device rejects any part, nothing is applied.
+
+On NX-OS, `get_evpn_instance_state` reports the VLAN and VNI state, the `nve1` interface, its VTEP peers (all NVE peers, not per VNI) and the VLAN's MAC table (remote MACs show interface `Nve`). Delete also removes the VLAN from trunk allowed lists, except the default `1-4094` list and lists where it is the only VLAN.
 
 ### IGP *(SR OS only for now)*
 | Tool | Description |
@@ -276,7 +281,7 @@ On EOS and Junos, provision and delete are a single atomic gNMI Set: if the devi
 
 > **Note:** IGP, MPLS/SR, VRF, and Logging tools are wired up but SR OS backend implementations are Phase 4 work. Calling them today returns `"Error: <method> is not implemented for NOS 'sros'."` until Phase 4 lands.
 
-Write tools that support `dry_run: true` show the full gNMI payload that would be sent without making any changes to the device.
+Write tools that support `dry_run: true` show the full payload that would be sent (gNMI paths and values, or the NETCONF `<edit-config>` XML on NX-OS) without making any changes to the device.
 
 ## Lab Environment
 
@@ -323,6 +328,7 @@ src/netmcp/
 │   ├── srl/           # Nokia SR Linux — EVPN (MAC-VRF); same three files
 │   ├── eos/           # Arista EOS — EVPN (VLAN-based), BGP; same three files
 │   ├── junos/         # Juniper Junos Evolved — EVPN (mac-vrf), BGP; same three files
+│   ├── nxos/          # Cisco NX-OS — BGP, EVPN (VLAN-based) over NETCONF (Cisco-NX-OS-device YANG); same three files
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     ├── formatters.py  # Output formatting helpers
@@ -336,6 +342,7 @@ tests/
     ├── test_srl_backend.py  # SR Linux EVPN parsing
     ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
     ├── test_junos_backend.py # Junos EVPN parsing, provision, delete; BGP
+    ├── test_nxos_backend.py  # NX-OS BGP parsing, NETCONF reply decoding; EVPN parsing, provision, delete
     └── test_structure.py    # enforces the layout below
 ```
 
