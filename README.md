@@ -1,6 +1,6 @@
 # netmcp
 
-An [MCP](https://modelcontextprotocol.io) server that lets an AI agent such as Claude query and configure multivendor routers (Nokia SR OS, Nokia SR Linux, Arista EOS, Juniper Junos) over gNMI. You ask questions in plain English, and the agent calls vendor-neutral tools like `get_bgp_summary` or `get_evpn_instances`.
+An [MCP](https://modelcontextprotocol.io) server that lets an AI agent such as Claude query and configure multivendor routers (Nokia SR OS, Nokia SR Linux, Arista EOS, Juniper Junos, Cisco NX-OS, NVIDIA Cumulus) over gNMI, NETCONF or NVIDIA's NVUE REST API. You ask questions in plain English, and the agent calls vendor-neutral tools like `get_bgp_summary` or `get_evpn_instances`.
 
 > 🎥 **Demo recording:** _coming soon_
 >
@@ -8,7 +8,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets an AI agent such as C
 
 ## Requirements
 
-- A running [containerlab](https://containerlab.dev) lab with SR OS, SR Linux, EOS or Junos nodes (any topology), or your own `netmcp.yml` inventory
+- A running [containerlab](https://containerlab.dev) lab with SR OS, SR Linux, EOS, Junos, NX-OS or Cumulus nodes (any topology), or your own `netmcp.yml` inventory
 - Docker with Compose v2
 - [`uv`](https://docs.astral.sh/uv/) (only used to generate the inventory)
 - [Claude Code](https://claude.com/claude-code)

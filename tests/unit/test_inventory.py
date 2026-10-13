@@ -68,3 +68,33 @@ def test_missing_clab_topology_env_is_an_error(monkeypatch, tmp_path):
     monkeypatch.setenv("NETMCP_CLAB_TOPOLOGY", str(tmp_path / "missing.clab.yml"))
     with pytest.raises(FileNotFoundError, match="NETMCP_CLAB_TOPOLOGY"):
         inventory._find_clab_file()
+
+
+def test_cumulus_defaults(tmp_path):
+    import yaml
+    inspect = {"mv": [_c("mv-nvidia", "nvidia_cumulusvx", "leaf")]}
+    doc = clab_inspect_to_yml(inspect)
+    assert doc["inventory"]["nodes"] == [
+        {"name": "nvidia", "fqdn": "mv-nvidia", "nos": "cumulus", "tags": ["leaf"]},
+    ]
+    doc["inventory"]["nodes"].append(
+        {"name": "cvx2", "fqdn": "cvx2", "nos": "cumulus", "username": "netops"}
+    )
+    path = tmp_path / "netmcp.yml"
+    path.write_text(yaml.safe_dump(doc))
+    nodes = inventory._load_from_yml(path)
+    assert (nodes["nvidia"].transport, nodes["nvidia"].username) == ("rest", "cumulus")
+    assert nodes["cvx2"].username == "netops"
+
+
+def test_cumulus_clab_topology(tmp_path):
+    import yaml
+    path = tmp_path / "mv.clab.yml"
+    path.write_text(yaml.safe_dump({
+        "name": "mv", "prefix": "__lab-name",
+        "topology": {"nodes": {"nvidia": {"kind": "nvidia_cumulusvx"}}},
+    }))
+    node = inventory._load_from_clab(path)["nvidia"]
+    assert (node.fqdn, node.nos_type, node.transport, node.username) == (
+        "mv-nvidia", "cumulus", "rest", "cumulus",
+    )

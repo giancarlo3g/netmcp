@@ -2,9 +2,9 @@
 # running containerlab lab with:  netmcp inventory --from-clab [LAB] -o netmcp.yml
 #
 # Per node: name and fqdn (hostname or IP) are required; nos is one of
-# sros | srl | eos | junos | iosxr. Optional: transport (gnmi | netconf),
+# sros | srl | eos | junos | nxos | cumulus | iosxr. Optional: transport (gnmi | netconf | rest),
 # gnmi_port (default per NOS: 57400, eos 6030, junos 32767), netconf_port,
-# username (default admin), tags. Passwords come from environment variables
+# username (default admin; cumulus for cumulus), tags. Passwords come from environment variables
 # (NETMCP_<NODE>_PASSWORD, NETMCP_DEFAULT_PASSWORD), never from this file.
 
 inventory:
@@ -23,4 +23,9 @@ inventory:
       fqdn: mv-ptx
       nos: junos
       gnmi_port: 32767
+      tags: [leaf]
+
+    - name: nvidia
+      fqdn: mv-nvidia
+      nos: cumulus        # NVUE REST API on port 8765, user cumulus
       tags: [leaf]

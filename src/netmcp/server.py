@@ -7,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 from netmcp.dispatch import register_unified_tools
 from netmcp.inventory import load_nodes
-from netmcp.nos import eos, iosxr, junos, nxos, srl, sros
+from netmcp.nos import cumulus, eos, iosxr, junos, nxos, srl, sros
 
 # pygnmi attaches a StreamHandler(sys.stdout) at import, which corrupts the MCP
 # stream in stdio mode. Drop it; its records still reach the root (stderr) handler.
@@ -32,6 +32,7 @@ REGISTRY = {
     "junos": junos.BACKEND,
     "iosxr": iosxr.BACKEND,
     "nxos":  nxos.BACKEND,
+    "cumulus": cumulus.BACKEND,
 }
 
 # Unified tools — work across all NOS, dispatch via REGISTRY.

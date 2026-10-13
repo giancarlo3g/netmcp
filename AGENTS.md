@@ -24,7 +24,7 @@ docker compose up -d --build                  # build from the working tree inst
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary) or NETCONF (fallback, used for NX-OS). The `netmcp` command is `src/netmcp/cli.py`: with no arguments it imports and runs `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
+This is an MCP (Model Context Protocol) server that exposes network routers from multiple vendors to LLM agents via gNMI (primary), NETCONF (used for NX-OS) or an OpenAPI-modeled REST API (NVUE, used for NVIDIA Cumulus). The `netmcp` command is `src/netmcp/cli.py`: with no arguments it imports and runs `src/netmcp/server.py`, which instantiates a `FastMCP` object and registers all tools through a single unified dispatch path.
 
 ### Architecture rules (do not change)
 
@@ -42,8 +42,12 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 4. **New NOS = new directory + one `REGISTRY` entry** in `server.py` (plus its containerlab kind in `inventory.CLAB_KIND_TO_NOS`). Nothing else registers anything.
 5. **Shared helpers go in `utils/`** (`formatters.py`, `yang.py`), not copied between NOS directories and not imported across them (e.g. `nos/eos` must not import from `nos/srl`).
 6. **Every implemented backend gets `tests/unit/test_<nos>_backend.py`**, with `gnmi_get`/set mocked using reply shapes captured from a live node.
-7. **Device access is YANG-modeled APIs only: gNMI (gRPC), NETCONF, or RESTCONF.** Every read and write in `client.py` must target a YANG model (OpenConfig or the vendor's native YANG). Never use the CLI: no netmiko, paramiko/SSH screen-scraping, scrapli, or eAPI/NX-API command execution, and no CLI-based models or encodings that aren't YANG, such as gNMI's `cli:` origin, `ASCII` encoding for CLI text, or NETCONF RPCs that wrap CLI commands (`<command>`, `<cli>`). If a feature has no YANG path on a NOS, leave that method unimplemented (it falls back to `NotImplementedBackend`) rather than falling back to the CLI.
-   - gNMI uses **pygnmi** today. NETCONF or RESTCONF may be added when a NOS needs them (e.g. `ncclient` for NETCONF, `httpx` for RESTCONF), but the library stays inside that NOS's `client.py` or a shared transport in `utils/`. It must not leak into `backend.py`, `dispatch.py`, or `registry.py`.
+7. **Device access is schema-modeled APIs only, never the CLI.** Every read and write in `client.py` must target a published data model:
+   - **Preferred:** YANG (OpenConfig or the vendor's native YANG) over gNMI, NETCONF or RESTCONF.
+   - **Allowed only when the NOS has no usable YANG API for the feature:** a vendor REST API defined by a published OpenAPI 3 specification, e.g. NVIDIA Cumulus NVUE (`/nvue_v1/...`).
+
+   Never use the CLI: no netmiko, paramiko/SSH screen-scraping, scrapli, or eAPI/NX-API CLI command execution, and no CLI-based encodings or wrappers, such as gNMI's `cli:` origin, `ASCII` encoding for CLI text, NETCONF RPCs that wrap CLI commands (`<command>`, `<cli>`), or REST endpoints that take CLI commands. If a feature has no schema-modeled path on a NOS, leave that method unimplemented (it falls back to `NotImplementedBackend`) rather than falling back to the CLI.
+   - gNMI uses **pygnmi**, NETCONF uses **ncclient**, and OpenAPI REST uses **httpx**. The library stays inside that NOS's `client.py` or a shared transport in `utils/`. It must not leak into `backend.py`, `dispatch.py`, or `registry.py`.
 
 ### Data flow
 
@@ -53,7 +57,7 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 3. **`dispatch.py`** — Registers 29 unified tools (e.g. `get_interfaces`, `get_bgp_summary`, `provision_evpn_instance`). Each tool calls `_resolve(nodes, registry, node)` to get `(NodeInfo, NOSBackend)`, then delegates to the matching Protocol method. Unknown nodes and unregistered NOS types return `"Error: ..."` strings — never exceptions.
 
-4. **NOS modules** (`nos/sros/`, `nos/srl/`, `nos/eos/`, `nos/junos/`, `nos/nxos/`, `nos/iosxr/`) — Each exports `NOS_TYPE` and `BACKEND` (a singleton implementing `NOSBackend`). There are no vendor-specific tool registrations; all tools go through `dispatch.py`.
+4. **NOS modules** (`nos/sros/`, `nos/srl/`, `nos/eos/`, `nos/junos/`, `nos/nxos/`, `nos/cumulus/`, `nos/iosxr/`) — Each exports `NOS_TYPE` and `BACKEND` (a singleton implementing `NOSBackend`). There are no vendor-specific tool registrations; all tools go through `dispatch.py`.
 
 5. **`nos/sros/backend.py`** — `SROSBackend(NotImplementedBackend)` implements the `NOSBackend` Protocol for system, interfaces, BGP, and EVPN (read and write). Domains not yet implemented (IGP, MPLS/SR, VRF, Logging) fall through to `NotImplementedBackend` and return error strings.
 
@@ -67,9 +71,11 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 
 10. **`nos/nxos/`** — `NXOSBackend` implements the 4 BGP read methods and the 5 EVPN methods (VLAN-based EVPN-VXLAN) over **NETCONF** (ncclient) with the native `Cisco-NX-OS-device` YANG model. `client.py` exposes `netconf_get(node, filter_xml)` and `netconf_get_config(node, filter_xml)` (subtree filters), both returning the `<data>` reply decoded to a nested dict (namespaces stripped, `*-list` elements always lists, leaves as strings) or `None`, and `netconf_edit_config(node, config_xml)` (one `<edit-config>` on running, merge, `rollback-on-error`, so no rollback helper). See "NETCONF path conventions (NX-OS)".
 
-11. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
+11. **`nos/cumulus/`** — `CumulusBackend` implements the 4 BGP read methods and the 5 EVPN methods (VLAN-based EVPN in bridge `br_default`) over the **NVUE REST API** (NVIDIA's OpenAPI 3 model; Cumulus has no usable YANG API: gNMI has no Get and its Subscribe sent no data). `client.py` exposes `nvue_get(node, path, rev="operational")` (GET, `rev` = `operational` | `applied`), returning parsed JSON, `None` on 404, and raising `RuntimeError` on auth or other HTTP errors, and `nvue_apply(node, tree)`, which applies one JSON tree as a single NVUE revision (so no rollback helper). `test_structure.py` allows HTTP write verbs only inside `nvue_apply`. See "NVUE REST conventions (Cumulus)".
 
-12. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
+12. **`utils/`** — `formatters.py` (`format_node_results`, `format_dry_run`), `yang.py` (`ns_get` — dict lookup that also matches module-prefixed json_ietf keys like `arista-exp-eos-vxlan:arista-vxlan`; `strip_prefix` for identityref values) and `openconfig.py` (`entries`, `leaf`, `peer_summary`, `active_afi_safis` — OpenConfig list/leaf walking and the compact BGP peer view shared by EOS and Junos). Use these rather than re-implementing reply parsing per backend.
+
+13. **`registry.py`** — Defines the `NOSBackend` Protocol (the interface every NOS backend must satisfy) and `NotImplementedBackend` (the default for placeholder NOS directories).
 
 ### NodeInfo
 
@@ -80,11 +86,11 @@ This structure is fixed. Fit new work into it; do not restructure around it. `te
 class NodeInfo:
     name: str        # short name: "dcgw1"
     fqdn: str        # hostname: "clab-evpn-dcgw1"
-    nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos"
-    transport: str   # "gnmi" | "netconf"
+    nos_type: str    # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos" | "cumulus"
+    transport: str   # "gnmi" | "netconf" | "rest"
     netconf_port: int  # default 830
     gnmi_port: int   # default 57400 (6030 for eos, 32767 for junos, via _NOS_GNMI_PORT_DEFAULTS)
-    username: str    # default "admin"
+    username: str    # default "admin" ("cumulus" for cumulus, via _NOS_USERNAME_DEFAULTS)
     tags: list[str]
 ```
 
@@ -145,6 +151,28 @@ class NodeInfo:
   - Lookup by VLAN name or id; VLAN id is reported as the EVI; `evi`/`service_id` are ignored. Provision needs `interface_name` (a Layer2 trunk, `Ethernet1/1`) and `vlan_id` (2-3967), and an existing `nve1`. Delete leaves the default `1-4094` trunk list and single-VLAN lists alone.
   - State: `BD-list` `operSt`, `Ep-list` `operState`/`opervni-items/OperNw-list`, VTEPs in `peers-items/dy_peer-items/DyPeer-list` (all NVE peers), MACs in `mac-items/table-items/vlan-items/MacAddressEntry-list` (both keys required in a filter, so the whole table is read; remote MACs have `port` `Nve`).
 
+### NVUE REST conventions (Cumulus)
+
+- NVUE is the Cumulus Linux 5.x object model; the `nv` CLI and the REST API are two front ends to it. The REST API is defined by NVIDIA's OpenAPI 3 specification and serves the model tree as URLs: `nv show vrf default router bgp neighbor` ↔ `GET /nvue_v1/vrf/default/router/bgp/neighbor`.
+- HTTPS on port 8765 (`NVUE_PORT` in `client.py`), self-signed cert (`verify=False`), HTTP basic auth, user `cumulus`. `rev=applied` is the running config, `rev=operational` the live state.
+- `trust_env=False`: through the corporate proxy the request comes back empty. Test by hand with `curl -k --noproxy '*'`.
+- Errors are decided by status code only: a wrong password returns HTTP 401 with an nginx HTML body; an unknown object returns HTTP 404 with an RFC 7807 JSON body (`/errors/ItemDoesNotExist`) → `None`.
+- BGP: `router/bgp` (applied: `autonomous-system`, `router-id`), `vrf/default/router/bgp` (applied: neighbors, address families), `vrf/default/router/bgp/neighbor[/<ip>]` (operational).
+  - The operational neighbor list is keyed by peer IP: `session-state` (`established`), `remote-as` (number), `uptime`, `last-reset-reason`, `message-stats`, and `address-family.<afi>.{rx-prefix,tx-prefix}` for the active families only. There is no installed-prefix count.
+  - `get_bgp_summary` / `get_bgp_neighbors` return the same compact per-peer view as the other NOSes: `session-state` uppercased, address-family names mapped to OpenConfig spelling (`l2vpn-evpn` → `L2VPN_EVPN`), `rx-prefix`/`tx-prefix` → `received`/`sent` (no `installed`, like NX-OS). AS and router-id come from `router/bgp`; the VRF-level config shows `auto` for both.
+  - `get_bgp_neighbor` returns the raw NVUE operational neighbor object; `get_bgp_config` returns `{router: {bgp}, vrf: {default: {router: {bgp}}}}` from `rev=applied`, with neighbor `password` hashes (`$nvsec$…`) replaced by `<redacted>`.
+- gNMI (port 9339) is not used: Get is `Unimplemented` on 5.16 and Subscribe returned no updates.
+- Debugging by hand: empty curl output means the request went through the proxy (add `--noproxy '*'`); HTTP 401 means a wrong password, not a missing API.
+- EVPN instance = VLAN `bridge/domain/br_default/vlan/<N>` → `vni/<VNI>` + `evpn/vni/<VNI>` (`rd`, `route-target/{both|import|export}/<rt>`) + tagged port membership `interface/<swpN>/bridge/domain/br_default/vlan/<N>`.
+  - Named `vlanN`; looked up by `vlanN`, VLAN id or VNI; the VLAN id is reported as the EVI; `service_name`/`service_id`/`evi` are ignored.
+  - Provision needs `interface_name` (already a `br_default` member) and `vlan_id` (2-3724: NVUE reserves 3725-3999 and 4000-4064), and checks that the bridge is vlan-aware and that `nve vxlan` and `evpn` are enabled; it never creates them. RD may be `auto` (sent literally); RTs are explicit, `target:` is stripped, equal import/export → `both`.
+  - Delete removes the VLAN, the EVPN VNI and the VLAN on every port, except a port where it's the only VLAN (an empty VLAN list means the port carries every bridge VLAN).
+  - State: `evpn/vni/<VNI>` (operational: `local-vtep`, `mac-count`, `remote-vtep/<ip>/flood`; no up/down) and `evpn/vni/<VNI>/mac` (`type` local/remote, `remote-vtep`). `rev=applied` replies include defaults.
+- Writes: `POST revision` → `{"<id>": {"state": "pending"}}` (ids are numbers on 5.16) → one `PATCH /nvue_v1/?rev=<id>` with the JSON tree (`null` unsets) → `PATCH revision/<id>` `{"state":"apply","auto-prompt":{"ays":"ays_yes"}}` → poll `GET revision/<id>`: `apply` → `readying` → `reloading` → `auto_saving` → `applied_and_saved` (about 9 s). Failures: a schema error is a 400 on the PATCH (`detail`); a semantic error ends `invalid` with `transition.issue.<n>.message` (e.g. `duplicate_vni`). `nvue_apply` deletes its revision on any failure (`DELETE revision/<id>` → 204).
+- `system config auto-save` is enabled by default, so a successful apply is also saved to startup (`applied_and_saved`). netmcp never requests a save itself.
+- Other users' pending revisions (e.g. one left by an interrupted `nv set`) don't block netmcp, which always works in its own new revision; leave them alone.
+- Design and captured reply shapes: `docs/prd-cumulus-bgp.md`, `docs/prd-cumulus-evpn.md`. Both verified live on mv-nvidia (5.16.1) through the MCP tools on 2026-10-13: BGP reads; EVPN reads; provision and delete of VLAN 20 / VNI 1020 on swp1 (dry run, apply, verify). The pre-checks were also tested live and rejected an existing VLAN, an unknown port (`swp9`) and a routed uplink (`swp2`).
+
 ### Write tools and dry_run
 
 Write tools accept a `dry_run: bool = False` parameter. When `True`, they return the formatted gNMI payload via `format_dry_run()` without calling `gnmi_set()` (NX-OS returns the `<edit-config>` XML instead, without calling `netconf_edit_config()`). Write tools that take structured inputs (e.g. `provision_evpn_instance`) validate parameters with a Pydantic model (e.g. `_VplsIntent` in `backend.py`) before any network call.
@@ -164,7 +192,7 @@ Without a `netmcp.yml`, the local stdio setup can instead read a topology file d
 
 #### Example: multivendor lab `mv`
 
-The lab used during development is `~/multivendor/multivendor.clab.yml` (lab `mv`). These facts apply only when that lab is loaded. Nodes: `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (`NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD`), and `nexus` (mv-nexus, Cisco N9Kv 10.6.3F, nxos, NETCONF 830, admin/admin; iBGP AS 65000 EVPN peers 192.1.2.1/192.1.2.2 via template `iBGP-evpn`; EVPN VLAN 10 `mac-vrf-10`, VNI 1010, RD 10:6, trunk `eth1/1`). EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` has no routing-instances, so "No EVPN instances found" is expected there.
+The lab used during development is `~/multivendor/multivendor.clab.yml` (lab `mv`). These facts apply only when that lab is loaded. Nodes: `sros` (mv-sros), `srl` (mv-srl), `ceos` (mv-ceos, cEOS 4.34.2F, gNMI 6030, admin/admin) and the cJunos Evolved nodes `ptx` (mv-ptx, leaf) and `ptx-gw` (mv-ptx-gw, spine/RR), both junos, gNMI 32767, admin/admin@123 (`NETMCP_PTX_PASSWORD`/`NETMCP_PTX_GW_PASSWORD`), `nexus` (mv-nexus, Cisco N9Kv 10.6.3F, nxos, NETCONF 830, admin/admin; iBGP AS 65000 EVPN peers 192.1.2.1/192.1.2.2 via template `iBGP-evpn`; EVPN VLAN 10 `mac-vrf-10`, VNI 1010, RD 10:6, trunk `eth1/1`) and `nvidia` (mv-nvidia, Cumulus VX 5.16.1, cumulus, NVUE REST 8765, cumulus/Clab123! via `NETMCP_NVIDIA_PASSWORD`; iBGP AS 65000, router-id 192.1.1.7, L2VPN-EVPN peers 192.1.2.1/192.1.2.2 from `lo`; EVPN instance `vlan10`: VLAN 10 → VNI 1010 in bridge `br_default`, RD 10:7, RT 65000:10 `both`, port swp1, 6 remote VTEPs 192.1.1.1-192.1.1.6. `swp1` is the only `br_default` member; `swp2`/`swp3` are routed uplinks. VLAN 20 / VNI 1020 is free and was used as the throwaway test service (provisioned and deleted on 2026-10-13). The switch has an old pending NVUE revision `5`, not created by netmcp; leave it alone). Observed 2026-10-13: every leaf's EVPN session to `ptx-gw` (RR 192.1.2.2) is ESTABLISHED with 0 routes received and sent, so EVPN is reflected only by `sros` (192.1.2.1). That is a ptx-gw issue (likely hidden routes), not a netmcp bug. EVPN baseline: VLAN 10, VNI 1010, RT 65000:10 (`mac-vrf-10` on SR Linux; `EVPN-VXLAN10` mac-vrf on `ptx`, RD 10:3, access unit `et-0/0/2.10`). `ptx-gw` has no routing-instances, so "No EVPN instances found" is expected there.
 
 After changing backend code, reload the server before testing through the MCP tools: with the HTTP setup, rebuild the container (`docker compose up -d --build`) and then reconnect (`/mcp` → netmcp → Reconnect); with the local stdio setup, reconnecting is enough.
 
@@ -192,6 +220,7 @@ Log only to stderr: in stdio mode stdout is the MCP stream.
 - The compose container is named `netmcp`; check it with `docker logs netmcp` (pygnmi messages go there) and over HTTP with the `mcp` client (`streamablehttp_client("http://127.0.0.1:8088/mcp")`, with `NO_PROXY=127.0.0.1` set so httpx skips the corporate proxy). After changing code, rebuild: `docker compose up -d --build`.
 - `.github/workflows/docker.yml` runs the unit tests and pushes `ghcr.io/giancarlo3g/netmcp` (linux/amd64 + arm64) on `main` (`latest`, `main`) and `v*` tags (`X.Y.Z`, `X.Y`); pull requests only build.
 - This host has stale `ghcr.io` credentials in `~/.docker/config.json`, so pulling the uv base image fails with `denied`. Build with an empty `DOCKER_CONFIG`, or run `docker logout ghcr.io`.
+- Behind the corporate proxy, `uv sync` inside the build cannot reach PyPI and times out (`Failed to download …`). Pass the proxy as build args: `docker compose build --build-arg http_proxy=$http_proxy --build-arg https_proxy=$https_proxy --build-arg no_proxy=$no_proxy`, then `docker compose up -d`. Lab traffic still bypasses the proxy at run time (`grpc_proxy=""` for gNMI, `trust_env=False` for NVUE).
 
 ### Credentials
 
@@ -199,7 +228,7 @@ Per-node credential resolution order:
 1. `NETMCP_{NODE_UPPER}_PASSWORD` (per-node env var; `-` in the node name becomes `_`, e.g. `NETMCP_PTX_GW_PASSWORD`)
 2. `NETMCP_DEFAULT_PASSWORD` (global env var)
 3. `SROS_PASSWORD` (legacy alias, SR OS only)
-4. NOS-specific hardcoded default (e.g. `NokiaSros1!` for SR OS)
+4. NOS-specific hardcoded default (e.g. `NokiaSros1!` for SR OS). Cumulus has none: set `NETMCP_<NODE>_PASSWORD` (in `mv`, `NETMCP_NVIDIA_PASSWORD=Clab123!`).
 
 ### Claude Code integration
 
