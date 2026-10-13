@@ -30,6 +30,8 @@ CLAB_KIND_TO_NOS: dict[str, str] = {
     "juniper_cjunosevolved": "junos",
     "cisco_xrd": "iosxr",
     "cisco_n9kv": "nxos",
+    "nvidia_cumulusvx": "cumulus",
+    "cumulus_cvx": "cumulus",
 }
 
 # Per-NOS transport defaults
@@ -40,6 +42,12 @@ _NOS_TRANSPORT_DEFAULTS: dict[str, str] = {
     "junos": "gnmi",
     "iosxr": "netconf",
     "nxos": "netconf",
+    "cumulus": "rest",
+}
+
+# Per-NOS login defaults (the rest use GNMI_USER)
+_NOS_USERNAME_DEFAULTS: dict[str, str] = {
+    "cumulus": "cumulus",
 }
 
 # Per-NOS gNMI port defaults (the rest use GNMI_PORT). Junos uses 32767 because
@@ -56,8 +64,8 @@ class NodeInfo:
 
     name: str           # short name used in tool calls, e.g. "dcgw1"
     fqdn: str           # hostname or IP the server connects to
-    nos_type: str       # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos"
-    transport: str = "gnmi"
+    nos_type: str       # "sros" | "srl" | "eos" | "junos" | "iosxr" | "nxos" | "cumulus"
+    transport: str = "gnmi"  # "gnmi" | "netconf" | "rest"
     gnmi_port: int = GNMI_PORT
     netconf_port: int = 830
     username: str = GNMI_USER
@@ -137,7 +145,7 @@ def _load_from_yml(path: Path) -> dict[str, NodeInfo] | None:
             transport=transport,
             gnmi_port=int(entry.get("gnmi_port", _NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT))),
             netconf_port=int(entry.get("netconf_port", 830)),
-            username=entry.get("username", GNMI_USER),
+            username=entry.get("username", _NOS_USERNAME_DEFAULTS.get(nos_type, GNMI_USER)),
             tags=list(entry.get("tags", [])),
         )
         nodes[node.name] = node
@@ -196,6 +204,7 @@ def _load_from_clab(path: Path) -> dict[str, NodeInfo]:
             nos_type=nos_type,
             transport=transport,
             gnmi_port=_NOS_GNMI_PORT_DEFAULTS.get(nos_type, GNMI_PORT),
+            username=_NOS_USERNAME_DEFAULTS.get(nos_type, GNMI_USER),
         )
     return nodes
 

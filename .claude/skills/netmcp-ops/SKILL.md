@@ -1,6 +1,6 @@
 ---
 name: netmcp-ops
-description: Operate and troubleshoot network routers (Nokia SR OS, SR Linux, Arista EOS, Juniper Junos, Cisco NX-OS) through the netmcp MCP tools. Use whenever the user asks about routers, nodes, the lab, interfaces, ports, BGP peers/sessions, EVPN/VXLAN instances, VLANs, VNIs, route-targets, or wants to provision/delete a service or change an interface description — including requests that name a node (e.g. sros, srl, ceos, ptx, ptx-gw, nexus, dcgw1) or say "all routers".
+description: Operate and troubleshoot network routers (Nokia SR OS, SR Linux, Arista EOS, Juniper Junos, Cisco NX-OS, NVIDIA Cumulus) through the netmcp MCP tools. Use whenever the user asks about routers, nodes, the lab, interfaces, ports, BGP peers/sessions, EVPN/VXLAN instances, VLANs, VNIs, route-targets, or wants to provision/delete a service or change an interface description — including requests that name a node (e.g. sros, srl, ceos, ptx, ptx-gw, nexus, nvidia, dcgw1) or say "all routers".
 ---
 
 # Operating routers with netmcp
@@ -26,13 +26,13 @@ Call `list_nodes` first. It gives each node's short name and NOS type. Always pa
 
 ## What each NOS supports
 
-| Tools | sros | srl | eos | junos | nxos | iosxr |
-|---|---|---|---|---|---|---|
-| `get_system_info`, `get_system_alarms` | ✓ | – | – | – | – | – |
-| `get_ports`, `get_interfaces`, `get_interface_state`, `set_interface_description` | ✓ | – | – | – | – | – |
-| `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor`, `get_bgp_config` | ✓ | ✓ | ✓ | ✓ | ✓ | – |
-| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | ✓ | – |
-| IS-IS, OSPF, MPLS, SR, VRF, log tools | – | – | – | – | – | – |
+| Tools | sros | srl | eos | junos | nxos | cumulus | iosxr |
+|---|---|---|---|---|---|---|---|
+| `get_system_info`, `get_system_alarms` | ✓ | – | – | – | – | – | – |
+| `get_ports`, `get_interfaces`, `get_interface_state`, `set_interface_description` | ✓ | – | – | – | – | – | – |
+| `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor`, `get_bgp_config` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| IS-IS, OSPF, MPLS, SR, VRF, log tools | – | – | – | – | – | – | – |
 
 `–` returns a "not implemented" error string: that means *unsupported*, not *broken*. Don't retry it, and don't call it on purpose — skip that node and say so.
 
@@ -85,6 +85,7 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 - EOS reports `redistribute` as `LEARNED, ROUTER_MAC, HOST_ROUTE` even when only `LEARNED` was set.
 - The EOS and NX-OS BGP summaries have no `total-paths`/`total-prefixes`. SR OS, SR Linux and Junos report them.
 - NX-OS (reached over NETCONF) reports per-AFI `received`/`sent` only, with no `installed`. `get_bgp_neighbor`/`get_bgp_config` return the native `Cisco-NX-OS-device` tree (`Peer-list`, `PeerEntry-list`, `peerImp` = template).
+- Cumulus (reached over the NVUE REST API) has no `total-paths`/`total-prefixes` in the BGP summary, and per-AFI `received`/`sent` only, with no `installed`. Its peers also carry `uptime` and `last-reset-reason`; peer passwords in `get_bgp_config` are shown as `<redacted>`. `get_bgp_neighbor` returns the native NVUE neighbor object and `get_bgp_config` the NVUE `router/bgp` + `vrf/default/router/bgp` trees.
 - NX-OS `get_evpn_instance_state` lists all NVE peers as `vteps` (not per VNI); remote MACs show interface `Nve` with no VTEP IP.
 - `ptx-gw` is the spine/route reflector: "No EVPN instances found" there is expected.
 - Junos (cJunos Evolved) takes several minutes to boot. If calls to it fail after ~5 s with an empty error once it's up, ask the user to reconnect the server (`/mcp` → netmcp → Reconnect). Don't try to diagnose it yourself.
@@ -92,4 +93,4 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 
 ## Lab baseline (multivendor lab `mv` only)
 
-EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. `nexus` (NX-OS) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 through template `iBGP-evpn`, and has `mac-vrf-10` (VLAN 10, VNI 1010, RD 10:6, trunk `eth1/1`). Use this as the expected state when checking the lab; it doesn't apply to other inventories.
+EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. `nexus` (NX-OS) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 through template `iBGP-evpn`, and has `mac-vrf-10` (VLAN 10, VNI 1010, RD 10:6, trunk `eth1/1`). `nvidia` (Cumulus) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 (AS 65000, router-id 192.1.1.7); its EVPN service is VLAN 10 → VNI 1010 (RD 10:7), but the EVPN tools aren't implemented for Cumulus yet. Use this as the expected state when checking the lab; it doesn't apply to other inventories.

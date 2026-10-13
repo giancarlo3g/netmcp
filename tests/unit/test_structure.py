@@ -6,9 +6,11 @@
     plus an optional README.md. Placeholders have only __init__.py (+ README.md).
   - Backends only implement NOSBackend Protocol methods; new capabilities go
     through registry.py + dispatch.py, never vendor-specific tools.
-  - Devices are reached only through YANG-modeled APIs (gNMI, NETCONF,
-    RESTCONF): no CLI libraries, no gNMI `cli:` origin / ASCII encoding, no
-    NETCONF RPCs that wrap CLI commands.
+  - Devices are reached only through schema-modeled APIs: YANG (gNMI, NETCONF,
+    RESTCONF), or a vendor REST API defined by a published OpenAPI 3 spec when
+    the NOS has no usable YANG API (NVIDIA Cumulus NVUE). No CLI libraries, no
+    gNMI `cli:` origin / ASCII encoding, no NETCONF RPCs that wrap CLI commands.
+    HTTP libraries stay in a NOS client.py or utils/.
 
 If one of these tests fails, fix the code to fit the layout rather than
 changing the test. See "Architecture rules" in CLAUDE.md.
@@ -264,3 +266,38 @@ def test_no_cli_origin_encoding_or_rpcs():
         "Use YANG paths (OpenConfig or native) instead of the CLI origin, ASCII encoding "
         f"or CLI-wrapping RPCs: {offenders}"
     )
+
+
+# HTTP client libraries for OpenAPI REST transports (rule 7).
+HTTP_LIBRARIES = {"httpx", "requests", "aiohttp", "urllib3"}
+# Read-only REST clients: no write verbs.
+_READ_ONLY_REST_CLIENTS = [NOS_DIR / "cumulus" / "client.py"]
+_HTTP_WRITE_METHODS = {"post", "put", "patch", "delete"}
+
+
+def test_http_libraries_only_in_transport_modules():
+    offenders = []
+    for p in _py_files():
+        rel = p.relative_to(SRC)
+        if rel.parts[0] == "utils" or (rel.parts[0] == "nos" and p.name == "client.py"):
+            continue
+        for node in ast.walk(ast.parse(p.read_text())):
+            if isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods = [node.module]
+            else:
+                continue
+            offenders += [f"{rel}:{node.lineno} imports {m}" for m in mods if m.split(".")[0] in HTTP_LIBRARIES]
+    assert not offenders, f"HTTP libraries belong in a NOS client.py or utils/: {offenders}"
+
+
+@pytest.mark.parametrize("path", _READ_ONLY_REST_CLIENTS, ids=lambda p: str(p.relative_to(SRC)))
+def test_read_only_rest_clients_use_get_only(path):
+    offenders = [
+        f"{node.lineno} .{node.func.attr}()"
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _HTTP_WRITE_METHODS
+    ]
+    assert not offenders, f"{path.relative_to(SRC)} must only issue GET requests: {offenders}"

@@ -4,6 +4,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that ex
 
 **Currently implemented (via gNMI):** Nokia SR OS (system, interfaces, BGP, EVPN), Nokia SR Linux (EVPN), Arista EOS (EVPN, BGP), Juniper Junos Evolved (EVPN, BGP)
 **Currently implemented (via NETCONF):** Cisco NX-OS (BGP, EVPN)
+**Currently implemented (via NVUE REST, NVIDIA's OpenAPI 3 model):** NVIDIA Cumulus Linux (BGP)
 **Placeholder support:** Cisco IOS-XR
 
 ## Prerequisites
@@ -127,7 +128,14 @@ For agents that only launch stdio servers, run the image as the command and set 
 }
 ```
 
-The server has write tools and no authentication. Compose publishes the port on `127.0.0.1` only; keep it that way unless the network in front of it is trusted. Behind a corporate proxy, the image already sets `grpc_proxy=""` so gNMI does not go through `https_proxy`.
+The server has write tools and no authentication. Compose publishes the port on `127.0.0.1` only; keep it that way unless the network in front of it is trusted. Behind a corporate proxy, the image already sets `grpc_proxy=""` so gNMI does not go through `https_proxy`, and the Cumulus NVUE client ignores proxy variables (`trust_env=False`).
+
+Building the image behind a proxy needs the proxy passed as build args, or `uv sync` times out reaching PyPI:
+
+```bash
+docker compose build --build-arg http_proxy="$http_proxy" --build-arg https_proxy="$https_proxy" --build-arg no_proxy="$no_proxy"
+docker compose up -d
+```
 
 ---
 
@@ -169,6 +177,10 @@ inventory:
       fqdn: pe1.prod.example.com
       nos: iosxr
       transport: netconf
+
+    - name: leaf7
+      fqdn: mv-nvidia
+      nos: cumulus      # NVUE REST on 8765; transport rest and username cumulus by default
 ```
 
 `netmcp inventory --from-clab [LAB] [-o FILE]` writes one from a running containerlab lab (`containerlab inspect`), mapping each kind to its NOS and skipping `linux` nodes.
@@ -186,6 +198,7 @@ Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to o
 | SR OS, SR Linux | 57400 | |
 | Arista EOS | 6030 | |
 | Juniper Junos | 32767 | Enable with `set system services extension-service request-response grpc clear-text port 32767`. Don't use 57400: it is in the Linux ephemeral range (32768–60999), and Junos Evolved's internal `trace-relay` can take it as a source port at boot, leaving gNMI refusing connections. |
+| NVIDIA Cumulus | – | Not used: Cumulus is reached over the NVUE REST API on port 8765. Its gNMI (9339) has no Get, and Subscribe returned no data on 5.16. |
 | Cisco NX-OS | – | Not used: NX-OS is reached over NETCONF on port 830 (`netconf_port`, `feature netconf`). Its gNMI is TLS-only, and the auto-generated day-1 certificate expires after 24 hours. |
 
 ### Environment Variables
@@ -193,7 +206,7 @@ Each NOS has a default gNMI port; set `gnmi_port` on a node in `netmcp.yml` to o
 | Variable | Description |
 |---|---|
 | `NETMCP_{NODE_UPPER}_PASSWORD` | Per-node password (e.g. `NETMCP_DCGW1_PASSWORD`) |
-| `NETMCP_DEFAULT_PASSWORD` | Global password for all nodes |
+| `NETMCP_DEFAULT_PASSWORD` | Global password for all nodes. Cumulus has no built-in default, so set this or a per-node variable for Cumulus nodes |
 | `SROS_PASSWORD` | Legacy alias for SR OS nodes |
 | `NETMCP_CLAB_TOPOLOGY` | Explicit path to a containerlab topology file |
 | `NETMCP_NO_INVENTORY` | Set to `1` to start without any inventory (CI/testing) |
@@ -226,6 +239,17 @@ All tools are vendor-agnostic and dispatch automatically to the correct NOS back
 | `get_bgp_neighbors` | All BGP neighbor states |
 | `get_bgp_neighbor` | Detailed state for a specific BGP neighbor |
 | `get_bgp_config` | BGP configuration |
+
+`get_bgp_summary` and `get_bgp_neighbors` return a compact per-peer view (peer, peer AS, upper-cased state, per-AFI-SAFI prefix counts) on EOS, Junos, NX-OS, SR Linux and Cumulus. Per NOS:
+
+| NOS | Transport | Totals in summary | Per-AFI counts | `get_bgp_neighbor` / `get_bgp_config` return |
+|---|---|---|---|---|
+| SR Linux, Junos | gNMI | `total-paths`, `total-prefixes` | received / sent / installed | Native SR Linux tree; OpenConfig state / native Junos config |
+| EOS | gNMI | – | received / sent / installed | OpenConfig tree |
+| NX-OS | NETCONF | – | received / sent | `Cisco-NX-OS-device` tree |
+| Cumulus | NVUE REST | – | received / sent | NVUE operational neighbor; NVUE `router/bgp` + `vrf/default/router/bgp` config, with peer passwords shown as `<redacted>` |
+
+Cumulus peers also carry `uptime` and `last-reset-reason`.
 
 ### EVPN
 | Tool | Description |
@@ -329,6 +353,7 @@ src/netmcp/
 │   ├── eos/           # Arista EOS — EVPN (VLAN-based), BGP; same three files
 │   ├── junos/         # Juniper Junos Evolved — EVPN (mac-vrf), BGP; same three files
 │   ├── nxos/          # Cisco NX-OS — BGP, EVPN (VLAN-based) over NETCONF (Cisco-NX-OS-device YANG); same three files
+│   ├── cumulus/       # NVIDIA Cumulus Linux — BGP over the NVUE REST API (OpenAPI 3); same three files
 │   └── iosxr/         # Cisco IOS-XR — placeholder
 └── utils/
     ├── formatters.py  # Output formatting helpers
@@ -343,6 +368,7 @@ tests/
     ├── test_eos_backend.py  # EOS EVPN parsing, provision, delete; BGP
     ├── test_junos_backend.py # Junos EVPN parsing, provision, delete; BGP
     ├── test_nxos_backend.py  # NX-OS BGP parsing, NETCONF reply decoding; EVPN parsing, provision, delete
+    ├── test_cumulus_backend.py # Cumulus BGP parsing, NVUE client status handling
     └── test_structure.py    # enforces the layout below
 ```
 
