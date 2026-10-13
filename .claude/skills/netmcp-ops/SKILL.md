@@ -31,7 +31,7 @@ Call `list_nodes` first. It gives each node's short name and NOS type. Always pa
 | `get_system_info`, `get_system_alarms` | ✓ | – | – | – | – | – | – |
 | `get_ports`, `get_interfaces`, `get_interface_state`, `set_interface_description` | ✓ | – | – | – | – | – | – |
 | `get_bgp_summary`, `get_bgp_neighbors`, `get_bgp_neighbor`, `get_bgp_config` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
-| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `get_evpn_instances`, `get_evpn_instance`, `get_evpn_instance_state`, `provision_evpn_instance`, `delete_evpn_instance` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 | IS-IS, OSPF, MPLS, SR, VRF, log tools | – | – | – | – | – | – | – |
 
 `–` returns a "not implemented" error string: that means *unsupported*, not *broken*. Don't retry it, and don't call it on purpose — skip that node and say so.
@@ -64,11 +64,13 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 | eos | VLAN-based EVPN (VLAN, VLAN→VNI on Vxlan1, `router bgp / vlan`) | `interface_name` (a **trunk** switchport, e.g. `Ethernet1`), `vlan_id` | `service_id`, `evi` (VLAN id is the EVI) |
 | junos | vlan-based `mac-vrf` + access unit | `interface_name` (`et-0/0/2` → unit = `vlan_id`, or `et-0/0/2.20`), `vlan_id`, **`export_rt == import_rt`** | `service_id`, `evi` |
 | nxos | VLAN + `vn-segment`, `nve1` member vni (ingress-replication bgp), `evpn / vni N l2` | `interface_name` (a **Layer2 trunk**, e.g. `Ethernet1/1`), `vlan_id` (2-3967); `nve1` must already exist | `service_id`, `evi` (VLAN id is the EVI) |
+| cumulus | VLAN in bridge `br_default` → VNI, `evpn vni` (RD, RT), port tagged VLAN | `interface_name` (already a **`br_default` member**, e.g. `swp1`), `vlan_id` (2-3724); NVE VXLAN and EVPN must be enabled | `service_id`, `evi`, `service_name` (the instance is named `vlanN`; VLAN id is the EVI) |
 
 - RTs: `target:65000:10`; EOS and Junos also accept `65000:10`.
 - Junos: the parent port must already have `flexible-vlan-tagging` and `encapsulation flexible-ethernet-services`. netmcp never changes it, so if it's missing, tell the user.
 - EOS and Junos instances can be looked up by VLAN name or VLAN id as well as by name; NX-OS by VLAN name or VLAN id.
-- RD `auto` is accepted on NX-OS.
+- RD `auto` is accepted on NX-OS and Cumulus.
+- Cumulus instances are named `vlanN` (NVUE VLANs have no name) and can be looked up by `vlanN`, VLAN id or VNI. Equal import/export RTs are written as `route-target both`. A write is one NVUE revision, applied all-or-nothing, and takes about 10 s; the switch auto-saves it to startup config. Delete leaves the VLAN on a port where it's the only VLAN (removing it would make the port carry every VLAN) and says so.
 
 ## Troubleshooting recipes
 
@@ -86,6 +88,7 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 - The EOS and NX-OS BGP summaries have no `total-paths`/`total-prefixes`. SR OS, SR Linux and Junos report them.
 - NX-OS (reached over NETCONF) reports per-AFI `received`/`sent` only, with no `installed`. `get_bgp_neighbor`/`get_bgp_config` return the native `Cisco-NX-OS-device` tree (`Peer-list`, `PeerEntry-list`, `peerImp` = template).
 - Cumulus (reached over the NVUE REST API) has no `total-paths`/`total-prefixes` in the BGP summary, and per-AFI `received`/`sent` only, with no `installed`. Its peers also carry `uptime` and `last-reset-reason`; peer passwords in `get_bgp_config` are shown as `<redacted>`. `get_bgp_neighbor` returns the native NVUE neighbor object and `get_bgp_config` the NVUE `router/bgp` + `vrf/default/router/bgp` trees.
+- Cumulus `get_evpn_instance_state` has no up/down state for the VNI; it reports the VNI's local VTEP, MAC/host counts, remote VTEPs (`flood: HER`) and the EVPN MACs (`learned: local|remote`, remote ones with their VTEP).
 - NX-OS `get_evpn_instance_state` lists all NVE peers as `vteps` (not per VNI); remote MACs show interface `Nve` with no VTEP IP.
 - `ptx-gw` is the spine/route reflector: "No EVPN instances found" there is expected.
 - Junos (cJunos Evolved) takes several minutes to boot. If calls to it fail after ~5 s with an empty error once it's up, ask the user to reconnect the server (`/mcp` → netmcp → Reconnect). Don't try to diagnose it yourself.
@@ -93,4 +96,4 @@ For several nodes, dry-run all of them, confirm once for the whole set, then app
 
 ## Lab baseline (multivendor lab `mv` only)
 
-EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. `nexus` (NX-OS) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 through template `iBGP-evpn`, and has `mac-vrf-10` (VLAN 10, VNI 1010, RD 10:6, trunk `eth1/1`). `nvidia` (Cumulus) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 (AS 65000, router-id 192.1.1.7); its EVPN service is VLAN 10 → VNI 1010 (RD 10:7), but the EVPN tools aren't implemented for Cumulus yet. Use this as the expected state when checking the lab; it doesn't apply to other inventories.
+EVPN reference service: VLAN 10, VNI 1010, RT 65000:10. It's `mac-vrf-10` on SR Linux and `EVPN-VXLAN10` (RD 10:3, access `et-0/0/2.10`) on `ptx`. `ptx-gw` has no EVPN instance. `nexus` (NX-OS) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 through template `iBGP-evpn`, and has `mac-vrf-10` (VLAN 10, VNI 1010, RD 10:6, trunk `eth1/1`). `nvidia` (Cumulus) peers iBGP EVPN with 192.1.2.1 and 192.1.2.2 (AS 65000, router-id 192.1.1.7); and has `vlan10` (VLAN 10 → VNI 1010 in `br_default`, RD 10:7, RT 65000:10 `both`, port `swp1`). Use this as the expected state when checking the lab; it doesn't apply to other inventories.

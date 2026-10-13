@@ -270,8 +270,8 @@ def test_no_cli_origin_encoding_or_rpcs():
 
 # HTTP client libraries for OpenAPI REST transports (rule 7).
 HTTP_LIBRARIES = {"httpx", "requests", "aiohttp", "urllib3"}
-# Read-only REST clients: no write verbs.
-_READ_ONLY_REST_CLIENTS = [NOS_DIR / "cumulus" / "client.py"]
+# REST clients may only issue write requests from one designated function.
+_REST_WRITE_FUNCTIONS = {NOS_DIR / "cumulus" / "client.py": "nvue_apply"}
 _HTTP_WRITE_METHODS = {"post", "put", "patch", "delete"}
 
 
@@ -292,12 +292,19 @@ def test_http_libraries_only_in_transport_modules():
     assert not offenders, f"HTTP libraries belong in a NOS client.py or utils/: {offenders}"
 
 
-@pytest.mark.parametrize("path", _READ_ONLY_REST_CLIENTS, ids=lambda p: str(p.relative_to(SRC)))
-def test_read_only_rest_clients_use_get_only(path):
+@pytest.mark.parametrize("path", list(_REST_WRITE_FUNCTIONS), ids=lambda p: str(p.relative_to(SRC)))
+def test_rest_writes_only_in_designated_function(path):
+    allowed = _REST_WRITE_FUNCTIONS[path]
+    tree = ast.parse(path.read_text())
+    inside = {
+        id(n)
+        for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef) and fn.name == allowed
+        for n in ast.walk(fn)
+    }
     offenders = [
         f"{node.lineno} .{node.func.attr}()"
-        for node in ast.walk(ast.parse(path.read_text()))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        and node.func.attr in _HTTP_WRITE_METHODS
+        and node.func.attr in _HTTP_WRITE_METHODS and id(node) not in inside
     ]
-    assert not offenders, f"{path.relative_to(SRC)} must only issue GET requests: {offenders}"
+    assert not offenders, f"{path.relative_to(SRC)}: write requests are only allowed in {allowed}(): {offenders}"

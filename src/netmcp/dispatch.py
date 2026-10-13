@@ -252,20 +252,21 @@ def register_unified_tools(
 
         Args:
             node: Node short name (e.g. "dcgw1").
-            service_name: Name for the EVPN instance (e.g. "2").
-            service_id: Numeric service ID (1-2147483647). Required for SR OS; ignored for SR Linux, EOS, Junos and NX-OS.
+            service_name: Name for the EVPN instance (e.g. "2"). Ignored on Cumulus (NVUE VLANs have no name; the instance is "vlan<vlan_id>").
+            service_id: Numeric service ID (1-2147483647). Required for SR OS; ignored for SR Linux, EOS, Junos, NX-OS and Cumulus.
             vni: VXLAN Network Identifier (1-16777215).
-            evi: EVPN Instance number (1-65535). Ignored for EOS, Junos and NX-OS (VLAN-based; the VLAN id is the EVI).
-            route_distinguisher: BGP route-distinguisher (e.g. "1:31"; NX-OS also accepts "auto").
-            export_rt: BGP export route-target (e.g. "target:65011:1"; EOS, Junos and NX-OS also accept "65011:1").
+            evi: EVPN Instance number (1-65535). Ignored for EOS, Junos, NX-OS and Cumulus (VLAN-based; the VLAN id is the EVI).
+            route_distinguisher: BGP route-distinguisher (e.g. "1:31"; NX-OS and Cumulus also accept "auto").
+            export_rt: BGP export route-target (e.g. "target:65011:1"; EOS, Junos, NX-OS and Cumulus also accept "65011:1").
                 Junos uses one vrf-target for both, so export_rt and import_rt must be equal.
-            import_rt: BGP import route-target (e.g. "target:65011:1"; EOS, Junos and NX-OS also accept "65011:1").
+            import_rt: BGP import route-target (e.g. "target:65011:1"; EOS, Junos, NX-OS and Cumulus also accept "65011:1").
             dry_run: If True, show what would be sent without making changes.
             interface_name: Access port to attach (e.g. "ethernet-1/3" on SR Linux, "Ethernet1" on EOS,
-                "et-0/0/2" or "et-0/0/2.20" on Junos; the unit defaults to vlan_id, "Ethernet1/1" (a Layer2 trunk) on NX-OS).
-                Required for SR Linux, EOS, Junos and NX-OS.
-            vlan_id: VLAN ID for the bridged subinterface / EOS VLAN / Junos mac-vrf VLAN / NX-OS VLAN (2-4094; 2-3967 on NX-OS).
-                Required for SR Linux, EOS, Junos and NX-OS.
+                "et-0/0/2" or "et-0/0/2.20" on Junos; the unit defaults to vlan_id, "Ethernet1/1" (a Layer2 trunk) on NX-OS,
+                "swp1" (already a member of bridge br_default) on Cumulus).
+                Required for SR Linux, EOS, Junos, NX-OS and Cumulus.
+            vlan_id: VLAN ID for the bridged subinterface / EOS VLAN / Junos mac-vrf VLAN / NX-OS VLAN / Cumulus br_default VLAN
+                (2-4094; 2-3967 on NX-OS; 2-3724 on Cumulus). Required for SR Linux, EOS, Junos, NX-OS and Cumulus.
         """
         info, backend = _resolve(nodes, registry, node)
         if info is None:
