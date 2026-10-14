@@ -6,6 +6,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that ex
 **Currently implemented (via NETCONF):** Cisco NX-OS (BGP, EVPN)
 **Currently implemented (via NVUE REST, NVIDIA's OpenAPI 3 model):** NVIDIA Cumulus Linux (BGP, EVPN)
 **Placeholder support:** Cisco IOS-XR
+**Not supported:** SONiC (no single schema-modeled API covers BGP-EVPN; see [Not supported: SONiC](#not-supported-sonic))
 
 ## Prerequisites
 
@@ -383,3 +384,28 @@ tests/
 ## Adding a New NOS
 
 Each `nos/{vendor}/` directory has a fixed layout: `__init__.py` (`NOS_TYPE`, `BACKEND`), `backend.py` (a `NotImplementedBackend` subclass that overrides only `NOSBackend` Protocol methods), `client.py` (transport only), and an optional `README.md`. MCP tools are registered only in `dispatch.py`. `tests/unit/test_structure.py` fails if this layout is broken. See `nos/junos/README.md` for step-by-step instructions, and `nos/srl/` and `nos/eos/` for reference implementations.
+
+## Not supported: SONiC
+
+SONiC has no netmcp backend, by decision. It was evaluated on 2026-10-14 against community SONiC `master.1226279` (vrnetlab image `sonic_sonic-vs:26`, containerlab kind `sonic-vm`, node `mv-sonic`). The inventory keeps skipping `sonic-vm` nodes.
+
+**Why.** A BGP-EVPN service on SONiC lives in two places, and no single schema-modeled API reaches both:
+
+- **Data plane, in CONFIG_DB:** `VLAN`, `VLAN_MEMBER`, `VXLAN_TUNNEL` (VTEP), `VXLAN_TUNNEL_MAP` (VLAN → VNI), `VXLAN_EVPN_NVO`. This is where the VNI is created (`config vxlan map add`).
+- **Control plane, only in FRR:** with `docker_routing_config_mode: split-unified` (the lab's setting), BGP neighbors, `address-family l2vpn evpn`, `advertise-all-vni` and the per-VNI `rd` / `route-target` exist only in FRR's own config. The only way to read or change them is `vtysh`, which is a CLI and is not allowed (rule 7).
+
+**What the APIs offer on that build:**
+
+| API | Finding |
+|---|---|
+| RESTCONF (mgmt-framework, HTTPS 443) | Serves `sonic-vlan` and `openconfig-interfaces` (including switched-vlan). There is no BGP model (no `openconfig-network-instance`, no `sonic-bgp-*`). `sonic-vxlan` is advertised, but every path returns 404. |
+| gNMI (`telemetry` in the `gnmi` container, port 8080) | With `GNMI\|certs` empty it runs `--noTLS --bind_address 127.0.0.1`, so it can't be reached from off the box. Even once exposed, it serves CONFIG_DB, which has no BGP in split mode. |
+| NETCONF | Not provided. |
+
+**Partial support was rejected.** A backend could provision only the VLAN, the VNI map and the port, and leave the BGP tools unimplemented. FRR would then advertise the VNI with an automatic RD and RT (`65000:<VNI>`), which doesn't match the explicit RTs used across the fabric (e.g. `65000:10`). A backend split across APIs, with half the service out of reach, is not worth shipping.
+
+**What it would take to revisit:**
+
+1. Expose gNMI: a server certificate in `GNMI|certs` and password login in `GNMI|gnmi` (`user_auth password`), so `telemetry` runs with TLS and binds beyond localhost.
+2. Switch FRR to unified mode (`docker_routing_config_mode: unified`, `frr_mgmt_framework_config: true`), so frrcfgd builds FRR's config from CONFIG_DB tables modeled by sonic-yang: `BGP_GLOBALS`, `BGP_NEIGHBOR`, `BGP_GLOBALS_AF`, `BGP_GLOBALS_EVPN_VNI`, `BGP_GLOBALS_EVPN_RT`.
+3. Confirm with gNMI Capabilities that the `sonic-bgp-*` and `sonic-vxlan` models are served and that Set works on them. Live BGP state (session state, prefix counts) may still be thin, because frrcfgd only pushes config.
